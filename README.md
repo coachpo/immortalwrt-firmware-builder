@@ -6,41 +6,91 @@
 
 English | [简体中文](README_zh.md)
 
-Seed configs and a GitHub Actions workflow to build and optionally release ImmortalWrt firmware for Cudy TR3000 and Xiaomi CR6606 from a pinned tag.
+Firmware seeds and build automation to produce ImmortalWrt images for two routers:
 
-- Cudy TR3000 (Filogic) 
-- Xiaomi CR6606 (MT7621)
+- **Cudy TR3000 (MediaTek Filogic)** — feature-rich build with USB, storage, and Samba.
+- **Xiaomi CR6606 (MT7621)** — leaner build focused on core routing features.
 
-Each `seed.config` is meant to be copied to a build tree and expanded via `make defconfig` to produce a full `.config`. You can then adjust options interactively with `make menuconfig` before compiling.
+Each `seed.config` is a starting `.config` you expand with `make defconfig`, then optionally refine with `make menuconfig`.
 
-## Quick Start
-From a fresh ImmortalWrt (or OpenWrt) source tree root:
+## Repository Layout
+- `tr3000/seed.config` — TR3000 feature-rich profile.
+- `cr6606/seed.config` — CR6606 lean profile.
+- `immortalwrt/` — ImmortalWrt source tree as a submodule (ref can be overridden in CI).
+- `Dockerfile` — Reproducible Ubuntu 22.04 build environment with all toolchain deps.
+- `.github/workflows/builder.yml` — GitHub Actions workflow to build, cache, and release images.
 
+## Prerequisites (host build)
+Ubuntu/Debian build deps match the `Dockerfile`. Minimal one-liner:
 ```bash
-# 1. Clone sources (example)
-git clone https://github.com/immortalwrt/immortalwrt.git
+sudo apt-get update && sudo apt-get install -y \
+  ack antlr3 asciidoc autoconf automake autopoint binutils gcc-multilib gettext flex gawk \
+  bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar \
+  g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+  libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+  libreadline-dev libssl-dev libtool libyaml-dev lld llvm lrzsz mkisofs msmtp nano ninja-build \
+  p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-pyelftools \
+  qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget \
+  xmlto xxd zlib1g-dev zstd
+```
+
+## Quick Start (local build)
+Option A — use the bundled submodule:
+```bash
+git clone https://github.com/coachpo/immortalwrt-firmware-builder.git
+cd immortalwrt-firmware-builder
+git submodule update --init --recursive
+
 cd immortalwrt
 ./scripts/feeds update -a && ./scripts/feeds install -a
-
-# 2. Place one seed config as .config (choose a profile)
-mv /path/to/immortalwrt-firmware-builder/tr3000/seed.config .config    # TR3000 feature-rich
-# or
-mv /path/to/immortalwrt-firmware-builder/cr6606/seed.config .config    # CR6606 lean
-
-# 3. Expand defaults
+cp ../tr3000/seed.config .config   # or ../cr6606/seed.config
 make defconfig
-
-# 4. (Optional) Adjust interactively
-make menuconfig
-
-# 5. Build
+make menuconfig    # optional tweaks
 make -j"$(nproc)" V=sc
 ```
 
-Resulting firmware images will appear under `bin/targets/<target>/<subtarget>/`.
+Option B — drop a seed into your own ImmortalWrt/OpenWrt tree:
+```bash
+cp /path/to/immortalwrt-firmware-builder/tr3000/seed.config .config   # or cr6606/seed.config
+make defconfig
+make menuconfig   # optional
+make -j"$(nproc)" V=sc
+```
 
-## Enabled Packages & Functions Comparison
+Firmware images land under `bin/targets/<target>/<subtarget>/`.
 
+## GitHub Actions (workflow_dispatch)
+Workflow: **01-build-immortalwrt-firmware** (`.github/workflows/builder.yml`).
+
+Inputs:
+- `model`: `all` (default), `cr6606`, or `tr3000`.
+- `immortalwrt_ref`: optional branch/tag/SHA for the `immortalwrt` submodule.
+- `debug_build`: `false` by default; when `true` forces single-thread verbose build.
+- `jobs`: `auto` (nproc) or fixed `1/2/4/8/16`.
+
+Behavior:
+- Caches downloads, toolchains, targets, feeds, and ccache keyed by model/ref/seed hash.
+- Copies `matrix.model/seed.config` to `.config`, forces `CONFIG_CCACHE=y`, runs `make defconfig` then build.
+- Uploads artifacts per model (7-day retention) and, on success, publishes a release tag with binaries and manifests.
+
+## Docker (reproducible build env)
+Build the image:
+```bash
+docker build -t immortalwrt-builder .
+```
+Run with the repo mounted (preserves downloads/caches on your host):
+```bash
+docker run --rm -it \
+  -v "$(pwd)":/workdir \
+  immortalwrt-builder bash
+# inside the container:
+cd /workdir/immortalwrt
+./scripts/feeds update -a && ./scripts/feeds install -a
+cp ../tr3000/seed.config .config   # or ../cr6606/seed.config
+make defconfig && make -j"$(nproc)" V=sc
+```
+
+## Seed Feature Comparison
 This table compares the features enabled by both seed configurations.
 
 | CR6606 | TR3000 | Feature | Purpose | Notes |
@@ -73,9 +123,12 @@ This table compares the features enabled by both seed configurations.
 | ❌ | ✅ | USB tools | USB utilities and device identification | CR6606 lacks USB ports |
 | ❌ | ✅ | File manager | Web file manager in LuCI + Chinese UI | CR6606 lacks USB ports |
 
+## Troubleshooting
+- Re-run feeds if packages are missing: `./scripts/feeds update -a && ./scripts/feeds install -a`.
+- For noisy failures, try a single-thread verbose build: `make -j1 V=s`.
+- Free disk space before retrying large builds (`tmp`, `build_dir`, and cached downloads are the biggest users).
+- If caches confuse CI, rerun with a fresh seed hash (edit `seed.config` or clear caches).
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-
