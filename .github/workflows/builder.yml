@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       debug_build:
-        description: 'Debug build: single-thread + verbose logs'
+        description: "Debug build: single-thread + verbose logs"
         type: boolean
         required: false
         default: false
       jobs:
-        description: 'Parallel jobs: auto=nproc, or fixed number'
+        description: "Parallel jobs: auto=nproc, or fixed number"
         type: choice
         required: false
         default: auto
@@ -21,7 +21,7 @@ on:
           - "8"
           - "16"
       model:
-        description: 'Select model to build'
+        description: "Select model to build"
         type: choice
         required: false
         default: all
@@ -30,10 +30,10 @@ on:
           - cr6606
           - tr3000
       immortalwrt_ref:
-        description: 'ImmortalWrt git ref (branch, tag, or commit SHA)'
+        description: "ImmortalWrt git ref (branch, tag, or commit SHA)"
         type: string
         required: false
-        default: ''
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.model || 'all' }}-${{ (github.event.inputs.immortalwrt_ref && github.event.inputs.immortalwrt_ref) || (vars.IMMORTALWRT_REF && vars.IMMORTALWRT_REF) || 'default' }}
@@ -71,18 +71,18 @@ jobs:
       - name: Remove unwanted software to free disk
         uses: AdityaGarg8/remove-unwanted-software@v5
         with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-          remove-large-packages: 'false'
-          remove-cached-tools: 'false'
-          remove-swapfile: 'false'
-          verbose: 'false'
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "false"
+          remove-cached-tools: "false"
+          remove-swapfile: "false"
+          verbose: "false"
 
       - name: Checkout repository (with submodules)
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 1
@@ -303,14 +303,14 @@ jobs:
           FREED_DF=$((BEFORE_DF-AFTER_DF))
           echo "Workspace freed: $((FREED_WS/1024/1024)) MiB"
           echo "Disk freed: $((FREED_DF/1024/1024)) MiB"
-      
+
       # Note: Restored target caches (build_dir/target-* and staging_dir/target-*) can short-circuit compilation,
       # so ccache may show zero stats even when configured correctly.
       - name: Ccache stats
         if: ${{ !cancelled() }}
         run: |
           CCACHE_DIR=immortalwrt/.ccache ccache -s || true
-  
+
       - name: Summarize cache hits
         if: always()
         run: |
@@ -376,7 +376,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -426,7 +426,7 @@ jobs:
 
   notify-completion:
     runs-on: ubuntu-latest
-    needs: [ build, release ]
+    needs: [build, release]
     if: always()
     timeout-minutes: 5
     steps:
