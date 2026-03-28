@@ -82,7 +82,7 @@ jobs:
           verbose: 'false'
 
       - name: Checkout repository (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           submodules: recursive
           fetch-depth: 1
@@ -134,7 +134,7 @@ jobs:
 
       - name: Restore ccache cache (per model/ref)
         id: cache-ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: immortalwrt/.ccache
           key: ${{ runner.os }}-ccache-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}
@@ -148,7 +148,7 @@ jobs:
 
       - name: Restore ImmortalWrt downloads cache (per model/ref)
         id: cache-dl
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: immortalwrt/dl
           key: ${{ runner.os }}-dl-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}
@@ -158,7 +158,7 @@ jobs:
 
       - name: Restore feeds cache (per ref + feeds.conf)
         id: cache-feeds
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: immortalwrt/feeds
           key: ${{ runner.os }}-feeds-${{ hashFiles('immortalwrt/feeds.conf.default') }}-${{ env.IMMORTALWRT_REF }}
@@ -203,7 +203,7 @@ jobs:
 
       - name: Restore toolchain caches (per model/ref)
         id: cache-toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: |
             immortalwrt/staging_dir/toolchain-*
@@ -214,7 +214,7 @@ jobs:
 
       - name: Restore target caches (per model/ref/seed)
         id: cache-target-staging
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: |
             immortalwrt/staging_dir/target-*
@@ -225,7 +225,7 @@ jobs:
 
       - name: Restore build target caches (per model/ref/seed)
         id: cache-target-build
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: |
             immortalwrt/build_dir/target-*
@@ -236,7 +236,7 @@ jobs:
 
       - name: Restore host tools cache (per ref)
         id: cache-host
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: |
             immortalwrt/build_dir/host
@@ -247,7 +247,7 @@ jobs:
 
       - name: Restore hostpkg caches (per ref)
         id: cache-hostpkg
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: |
             immortalwrt/build_dir/hostpkg
@@ -358,7 +358,7 @@ jobs:
           fi
 
       - name: Upload firmware files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.0
         if: ${{ !cancelled() }}
         with:
           name: immortalwrt_firmware_${{ matrix.model }}${{ steps.compile.outputs.file_date }}
@@ -376,7 +376,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 1
 
