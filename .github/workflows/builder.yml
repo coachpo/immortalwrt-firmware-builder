@@ -3,32 +3,6 @@ name: 01-build-immortalwrt-firmware
 on:
   workflow_dispatch:
     inputs:
-      debug_build:
-        description: "Debug build: single-thread + verbose logs"
-        type: boolean
-        required: false
-        default: false
-      jobs:
-        description: "Parallel jobs: auto=nproc, or fixed number"
-        type: choice
-        required: false
-        default: auto
-        options:
-          - auto
-          - "1"
-          - "2"
-          - "4"
-          - "8"
-          - "16"
-      model:
-        description: "Select model to build"
-        type: choice
-        required: false
-        default: all
-        options:
-          - all
-          - cr6606
-          - tr3000
       immortalwrt_ref:
         description: "ImmortalWrt git ref (branch, tag, or commit SHA)"
         type: string
@@ -36,7 +10,7 @@ on:
         default: ""
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.model || 'all' }}-${{ (github.event.inputs.immortalwrt_ref && github.event.inputs.immortalwrt_ref) || (vars.IMMORTALWRT_REF && vars.IMMORTALWRT_REF) || 'default' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.immortalwrt_ref || vars.IMMORTALWRT_REF || 'default' }}
   cancel-in-progress: true
 
 permissions:
@@ -44,16 +18,9 @@ permissions:
 
 env:
   IMMORTALWRT_REF: ${{ github.event.inputs.immortalwrt_ref || vars.IMMORTALWRT_REF }}
-  DEBUG_BUILD: ${{ github.event.inputs.debug_build || 'false' }}
-  JOBS_INPUT: ${{ github.event.inputs.jobs || 'auto' }}
   CCACHE_MAX_SIZE: 4G
   CCACHE_DIR: ${{ github.workspace }}/immortalwrt/.ccache
   CCACHE_BASEDIR: ${{ github.workspace }}/immortalwrt
-  # Notification settings
-  BARK_SUCCESS_SOUND: "birdsong"
-  BARK_FAILURE_SOUND: "calypso"
-  BARK_ICON: "https://firmware-selector.immortalwrt.org/favicon.ico"
-  BARK_GROUP: "ImmortalWrt"
 
 jobs:
   build:
@@ -65,10 +32,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: ${{ fromJSON((github.event.inputs.model == '' || github.event.inputs.model == 'all') && '["cr6606","tr3000"]' || format('["{0}"]', github.event.inputs.model)) }}
+        model:
+          - cr6606
+          - tr3000
 
     steps:
       - name: Remove unwanted software to free disk
+        continue-on-error: true
         uses: AdityaGarg8/remove-unwanted-software@v5
         with:
           remove-dotnet: "true"
@@ -103,20 +73,12 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Compute seed hash (for build caches)
-        id: seed
-        run: |
-          HASH=$(sha256sum "${{ matrix.model }}/seed.config" | cut -d ' ' -f1)
-          echo "SEED_HASH=$HASH" >> $GITHUB_ENV
-          echo "seed_hash=$HASH" >> $GITHUB_OUTPUT
-
       - name: Set ImmortalWrt submodule to requested ref
         if: ${{ env.IMMORTALWRT_REF != '' }}
         run: |
           set -e
           echo "Switching submodule 'immortalwrt' to ref: ${IMMORTALWRT_REF}"
           git -C immortalwrt fetch --all --tags --prune
-          # Try ref as is; if not found, try origin/REF for branches
           if git -C immortalwrt rev-parse --verify --quiet "${IMMORTALWRT_REF}^{commit}"; then
             TARGET_REF="${IMMORTALWRT_REF}"
           elif git -C immortalwrt rev-parse --verify --quiet "origin/${IMMORTALWRT_REF}^{commit}"; then
@@ -130,40 +92,29 @@ jobs:
           git -C immortalwrt submodule update --init --recursive --depth=1
 
       - name: Prepare ccache dir
-        run: mkdir -p immortalwrt/.ccache || true
+        run: mkdir -p immortalwrt/.ccache
 
-      - name: Restore ccache cache (per model/ref)
-        id: cache-ccache
+      - name: Restore ccache cache
+        continue-on-error: true
         uses: actions/cache@v5.0.4
         with:
           path: immortalwrt/.ccache
-          key: ${{ runner.os }}-ccache-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}
+          key: ${{ runner.os }}-ccache-${{ matrix.model }}-${{ env.IMMORTALWRT_REF || 'default' }}
           restore-keys: |
             ${{ runner.os }}-ccache-${{ matrix.model }}-
             ${{ runner.os }}-ccache-
 
       - name: Setup ccache
-        run: |
-          CCACHE_DIR=immortalwrt/.ccache ccache -M ${CCACHE_MAX_SIZE}
+        run: CCACHE_DIR=immortalwrt/.ccache ccache -M ${CCACHE_MAX_SIZE}
 
-      - name: Restore ImmortalWrt downloads cache (per model/ref)
-        id: cache-dl
+      - name: Restore downloads cache
+        continue-on-error: true
         uses: actions/cache@v5.0.4
         with:
           path: immortalwrt/dl
-          key: ${{ runner.os }}-dl-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}
+          key: ${{ runner.os }}-dl-${{ env.IMMORTALWRT_REF || 'default' }}
           restore-keys: |
-            ${{ runner.os }}-dl-${{ matrix.model }}-
             ${{ runner.os }}-dl-
-
-      - name: Restore feeds cache (per ref + feeds.conf)
-        id: cache-feeds
-        uses: actions/cache@v5.0.4
-        with:
-          path: immortalwrt/feeds
-          key: ${{ runner.os }}-feeds-${{ hashFiles('immortalwrt/feeds.conf.default') }}-${{ env.IMMORTALWRT_REF }}
-          restore-keys: |
-            ${{ runner.os }}-feeds-
 
       - name: Update feeds
         run: |
@@ -176,8 +127,7 @@ jobs:
           ./scripts/feeds install -a
 
       - name: Prepare model build config
-        run: |
-          cp "${{ matrix.model }}/seed.config" immortalwrt/.config
+        run: cp "${{ matrix.model }}/seed.config" immortalwrt/.config
 
       - name: Enable ccache build option in build config
         run: |
@@ -189,151 +139,29 @@ jobs:
           cd immortalwrt
           make defconfig
 
-      - name: Verify ccache setup (pre-build)
-        run: |
-          which ccache || true
-          ccache --version || true
-          echo "CCACHE_DIR (env): ${CCACHE_DIR}"
-          echo "CCACHE_BASEDIR (env): ${CCACHE_BASEDIR}"
-          cd immortalwrt
-          echo "Check .config for CONFIG_CCACHE:" && grep -n '^CONFIG_CCACHE' .config || true
-          echo "Check .config for CONFIG_CCACHE_DIR:" && grep -n '^CONFIG_CCACHE_DIR' .config || true
-          ccache -p | sed -n 's/^cache_dir = /cache_dir = /p' || true
-          ccache -z || true
-
-      - name: Restore toolchain caches (per model/ref)
-        id: cache-toolchain
-        uses: actions/cache@v5.0.4
-        with:
-          path: |
-            immortalwrt/staging_dir/toolchain-*
-            immortalwrt/build_dir/toolchain-*
-          key: ${{ runner.os }}-toolchain-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}
-          restore-keys: |
-            ${{ runner.os }}-toolchain-${{ matrix.model }}-
-
-      - name: Restore target caches (per model/ref/seed)
-        id: cache-target-staging
-        uses: actions/cache@v5.0.4
-        with:
-          path: |
-            immortalwrt/staging_dir/target-*
-          key: ${{ runner.os }}-target-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}-${{ steps.seed.outputs.seed_hash }}
-          restore-keys: |
-            ${{ runner.os }}-target-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}-
-            ${{ runner.os }}-target-${{ matrix.model }}-
-
-      - name: Restore build target caches (per model/ref/seed)
-        id: cache-target-build
-        uses: actions/cache@v5.0.4
-        with:
-          path: |
-            immortalwrt/build_dir/target-*
-          key: ${{ runner.os }}-build-target-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}-${{ steps.seed.outputs.seed_hash }}
-          restore-keys: |
-            ${{ runner.os }}-build-target-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}-
-            ${{ runner.os }}-build-target-${{ matrix.model }}-
-
-      - name: Restore host tools cache (per ref)
-        id: cache-host
-        uses: actions/cache@v5.0.4
-        with:
-          path: |
-            immortalwrt/build_dir/host
-            immortalwrt/staging_dir/host
-          key: ${{ runner.os }}-host-${{ env.IMMORTALWRT_REF }}
-          restore-keys: |
-            ${{ runner.os }}-host-
-
-      - name: Restore hostpkg caches (per ref)
-        id: cache-hostpkg
-        uses: actions/cache@v5.0.4
-        with:
-          path: |
-            immortalwrt/build_dir/hostpkg
-            immortalwrt/staging_dir/hostpkg
-          key: ${{ runner.os }}-hostpkg-${{ env.IMMORTALWRT_REF }}
-          restore-keys: |
-            ${{ runner.os }}-hostpkg-
-
       - name: Compile the firmware
         id: compile
         run: |
           cd immortalwrt
           export CCACHE_DIR="$(pwd)/.ccache"
-          if [ "${DEBUG_BUILD}" = "true" ]; then
-            JOBS=1
-          else
-            if [ "${JOBS_INPUT}" = "auto" ] || [ -z "${JOBS_INPUT}" ]; then
-              JOBS=$(nproc)
-            else
-              JOBS="${JOBS_INPUT}"
-            fi
-          fi
+          JOBS="$(nproc)"
           printf "%s thread compile\n" "${JOBS}"
-          if [ "${DEBUG_BUILD}" = "true" ]; then VERBOSE_FLAG='V=sc'; else VERBOSE_FLAG=''; fi
-          make -j"${JOBS}" ${VERBOSE_FLAG} \
-            || make -j1 ${VERBOSE_FLAG} \
-            || make -j1 V=s
+          make -j"${JOBS}" || make -j1 V=s
           echo "status=success" >> $GITHUB_OUTPUT
           echo "file_date=_$(date +%Y%m%d%H%M)" >> $GITHUB_OUTPUT
 
-      - name: Check disk space and cleanup before cache creation
+      - name: Cleanup build workspace
         if: ${{ !cancelled() && steps.compile.outputs.status == 'success' }}
         run: |
           set -e
           echo "Disk usage before cleanup:" && df -h
-          BEFORE_WS=$(du -sb immortalwrt | awk '{print $1}' || echo 0)
-          BEFORE_DF=$(df -B1 / | tail -1 | awk '{print $3}' || echo 0)
-          echo "Cleaning up non-reused bulky artifacts..."
-          # Drop large, low-reuse build outputs (keep caches we stream)
           rm -rf immortalwrt/tmp 2>/dev/null || true
-          # rm -rf immortalwrt/bin/packages 2>/dev/null || true
-          # Prune heavy low-reuse targets content to keep cache lean
-          # find immortalwrt/build_dir -maxdepth 1 -type d -name 'target-*' -print0 | while IFS= read -r -d '' tgt; do
-          #   rm -rf "$tgt"/linux-* 2>/dev/null || true
-          #   rm -rf "$tgt"/samba-* 2>/dev/null || true
-          # done
-          # Trim huge logs
           find immortalwrt -name "*.log" -size +100M -delete 2>/dev/null || true
           echo "Disk usage after cleanup:" && df -h
-          AFTER_WS=$(du -sb immortalwrt | awk '{print $1}' || echo 0)
-          AFTER_DF=$(df -B1 / | tail -1 | awk '{print $3}' || echo 0)
-          FREED_WS=$((BEFORE_WS-AFTER_WS))
-          FREED_DF=$((BEFORE_DF-AFTER_DF))
-          echo "Workspace freed: $((FREED_WS/1024/1024)) MiB"
-          echo "Disk freed: $((FREED_DF/1024/1024)) MiB"
 
-      # Note: Restored target caches (build_dir/target-* and staging_dir/target-*) can short-circuit compilation,
-      # so ccache may show zero stats even when configured correctly.
       - name: Ccache stats
         if: ${{ !cancelled() }}
-        run: |
-          CCACHE_DIR=immortalwrt/.ccache ccache -s || true
-
-      - name: Summarize cache hits
-        if: always()
-        run: |
-          {
-            echo "## 📦 Cache Status Summary";
-            echo "";
-            echo "| Cache Type | Status | Key |";
-            echo "|------------|--------|-----|";
-            echo "| **ccache** | ${{ steps.cache-ccache.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-ccache-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}\` |";
-            echo "| **downloads** | ${{ steps.cache-dl.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-dl-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}\` |";
-            echo "| **feeds** | ${{ steps.cache-feeds.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-feeds-${{ hashFiles('immortalwrt/feeds.conf.default') }}-${{ env.IMMORTALWRT_REF }}\` |";
-            echo "| **toolchain** | ${{ steps.cache-toolchain.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-toolchain-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}\` |";
-            echo "| **target-staging** | ${{ steps.cache-target-staging.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-target-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}-${{ steps.seed.outputs.seed_hash }}\` |";
-            echo "| **target-build** | ${{ steps.cache-target-build.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-build-target-${{ matrix.model }}-${{ env.IMMORTALWRT_REF }}-${{ steps.seed.outputs.seed_hash }}\` |";
-            echo "| **host** | ${{ steps.cache-host.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-host-${{ env.IMMORTALWRT_REF }}\` |";
-            echo "| **hostpkg** | ${{ steps.cache-hostpkg.outputs.cache-hit == 'true' && '✅ Hit' || '❌ Miss' }} | \`${{ runner.os }}-hostpkg-${{ env.IMMORTALWRT_REF }}\` |";
-            echo "";
-            echo "### Cache Statistics";
-            echo "- **Model**: \`${{ matrix.model }}\`";
-            echo "- **ImmortalWrt Ref**: \`${{ env.IMMORTALWRT_REF }}\`";
-            echo "- **Seed Hash**: \`${{ steps.seed.outputs.seed_hash }}\`";
-            echo "- **Runner OS**: \`${{ runner.os }}\`";
-          } >> $GITHUB_STEP_SUMMARY
+        run: CCACHE_DIR=immortalwrt/.ccache ccache -s || true
 
       - name: Collect firmware files
         id: collect
@@ -358,13 +186,13 @@ jobs:
           fi
 
       - name: Upload firmware files
-        uses: actions/upload-artifact@v7.0.0
         if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7.0.0
         with:
           name: immortalwrt_firmware_${{ matrix.model }}${{ steps.compile.outputs.file_date }}
           path: ${{ steps.collect.outputs.files }}
           retention-days: 7
-          compression-level: 0 # No compression for binaries/pre-compressed firmware files
+          compression-level: 0
 
   release:
     if: ${{ always() && needs.build.result == 'success' }}
@@ -381,8 +209,7 @@ jobs:
           fetch-depth: 1
 
       - name: Prepare release files directory
-        run: |
-          mkdir -p release
+        run: mkdir -p release
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -393,9 +220,7 @@ jobs:
       - name: Organize release files by model
         run: |
           mkdir -p release/tr3000 release/cr6606
-          # TR3000 files
           find release -type f \( -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.fip' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.itb' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.bin' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.manifest' \) -exec cp -f {} release/tr3000/ \;
-          # CR6606 files
           find release -type f \( -name 'immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-*.bin' -o -name 'immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606*.manifest' \) -exec cp -f {} release/cr6606/ \;
 
       - name: Generate release tag
@@ -413,8 +238,8 @@ jobs:
           cat release.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload firmware to release (combined)
-        uses: softprops/action-gh-release@v2
         if: steps.tag.outputs.status == 'success'
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -423,24 +248,3 @@ jobs:
           files: |
             release/tr3000/*
             release/cr6606/*
-
-  notify-completion:
-    runs-on: ubuntu-latest
-    needs: [build, release]
-    if: always()
-    timeout-minutes: 5
-    steps:
-      - name: Notify via Bark
-        if: always()
-        uses: harryzcy/action-bark@v2.3.0
-        with:
-          status: ${{ needs.build.result == 'cancelled' || needs.release.result == 'cancelled' && 'cancelled' || needs.build.result == 'skipped' || needs.release.result == 'skipped' && 'skipped' || needs.build.result == 'success' && needs.release.result == 'success' && 'success' || 'failure' }}
-          on_status: success, failure, cancelled, skipped
-          title: "${{ (needs.build.result == 'cancelled' || needs.release.result == 'cancelled') && format('⏹️ImmortalWrt⏹️: Cancelled (Run #{0})', github.run_number) || (needs.build.result == 'skipped' || needs.release.result == 'skipped') && format('⏭️ImmortalWrt⏭️: Skipped (Run #{0})', github.run_number) || ((needs.release.result == 'success') || (needs.build.result == 'success')) && format('🚀ImmortalWrt🚀: Success (Run #{0})', github.run_number) || format('💥ImmortalWrt💥: Failed (Run #{0})', github.run_number) }}"
-          body: "${{ (needs.build.result == 'cancelled' || needs.release.result == 'cancelled') && format('Run #{0}: ⏹️ Workflow cancelled - build={1}, release={2}', github.run_number, needs.build.result, needs.release.result) || (needs.build.result == 'skipped' || needs.release.result == 'skipped') && format('Run #{0}: ⏭️ Workflow skipped - build={1}, release={2}', github.run_number, needs.build.result, needs.release.result) || ((needs.release.result == 'success') || (needs.build.result == 'success')) && ( needs.release.result == 'success' && format('Run #{0}: ✅ release published (tag: {1}).', github.run_number, needs.release.outputs.release_tag) || ( github.event_name == 'workflow_dispatch' && github.event.inputs.model != '' && github.event.inputs.model != 'all' && format('Run #{0}: ✅ firmware for {1} built successfully.', github.run_number, github.event.inputs.model) || format('Run #{0}: ✅ firmware built successfully.', github.run_number) ) ) || format('Run #{0}: 💥 Build failed: build={1}, release={2}', github.run_number, needs.build.result, needs.release.result) }}"
-          bark_server_url: ${{ secrets.BARK_SERVER_URL }}
-          device_key: ${{ secrets.BARK_DEVICE_KEY }}
-          level: active
-          sound: ${{ ((needs.release.result == 'success') || (needs.build.result == 'success')) && env.BARK_SUCCESS_SOUND || env.BARK_FAILURE_SOUND }}
-          icon: ${{ env.BARK_ICON }}
-          group: ${{ env.BARK_GROUP }}
