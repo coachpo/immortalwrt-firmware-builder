@@ -1,43 +1,74 @@
 # ImmortalWrt 固件构建器
 
-[![ImmortalWrt Builder](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/builder.yml/badge.svg?branch=main)](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/builder.yml)
+[![ImmortalWrt Builder](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/build-firmware.yml/badge.svg?branch=main)](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/build-firmware.yml)
 [![Latest Release](https://img.shields.io/github/v/release/coachpo/immortalwrt-firmware-builder?sort=semver&style=flat-square&label=Release&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 [![Downloads (latest)](https://img.shields.io/github/downloads/coachpo/immortalwrt-firmware-builder/latest/total?style=flat-square&label=Downloads&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 
 [English](README.md) | 简体中文
 
-用于从固定版本构建并（可选）发布 Cudy TR3000 和小米 CR6606 的 ImmortalWrt 固件的种子配置与 GitHub Actions 工作流。
+用于构建并（可选）发布 Cudy TR3000 和小米 CR6606 的 ImmortalWrt 固件的种子配置与 GitHub Actions 工作流。CI 会在运行时把 `immortalwrt/immortalwrt` 检出到已忽略的 `immortalwrt/` 目录。
 
 - Cudy TR3000 (Filogic)
 - Xiaomi CR6606 (MT7621)
 
 每个 `seed.config` 都用于复制到源码树根目录，通过 `make defconfig` 展开为完整的 `.config`。在编译前，你也可以通过 `make menuconfig` 进行交互式调整。
 
+## 仓库结构
+- `tr3000/seed.config` — TR3000 功能更完整的配置。
+- `cr6606/seed.config` — CR6606 轻量配置。
+- `immortalwrt/` — 已忽略的运行时源码检出目录，由本地命令或 CI 填充。
+- `.github/workflows/build-firmware.yml` — 拉取 ImmortalWrt、构建、缓存并发布固件。
+- `.github/workflows/cleanup-runs-releases.yml` — 定期清理旧 workflow runs 与兼容的 `immortalwrt-*` Releases。
+
 ## 快速开始
-在全新的 ImmortalWrt（或 OpenWrt）源码树根目录执行：
+方式 A：在本仓库中把 ImmortalWrt 克隆到已忽略的运行时目录：
 
 ```bash
-# 1. 克隆源码（示例）
-git clone https://github.com/immortalwrt/immortalwrt.git
+git clone https://github.com/coachpo/immortalwrt-firmware-builder.git
+cd immortalwrt-firmware-builder
+git clone --depth=1 https://github.com/immortalwrt/immortalwrt.git immortalwrt
+# 可选：与 CI 的 immortalwrt_ref 输入一致，切换到指定分支、标签或 SHA
+# git -C immortalwrt fetch --depth=1 origin <branch-tag-or-sha>
+# git -C immortalwrt checkout --detach FETCH_HEAD
+
 cd immortalwrt
 ./scripts/feeds update -a && ./scripts/feeds install -a
-
-# 2. 选择一个机型将种子配置放为 .config
-mv /path/to/immortalwrt-firmware-builder/tr3000/seed.config .config    # TR3000 功能更全面
+cp ../tr3000/seed.config .config    # TR3000 功能更全面
 # 或
-mv /path/to/immortalwrt-firmware-builder/cr6606/seed.config .config    # CR6606 轻量
-
-# 3. 展开默认配置
+cp ../cr6606/seed.config .config    # CR6606 轻量
 make defconfig
+make menuconfig    # 可选
+make -j"$(nproc)" V=sc
+```
 
-# 4.（可选）交互式调整
-make menuconfig
+方式 B：在你自己的 ImmortalWrt（或 OpenWrt）源码树根目录使用种子配置：
 
-# 5. 编译
+```bash
+cp /path/to/immortalwrt-firmware-builder/tr3000/seed.config .config    # TR3000 功能更全面
+# 或
+cp /path/to/immortalwrt-firmware-builder/cr6606/seed.config .config    # CR6606 轻量
+make defconfig
+make menuconfig    # 可选
 make -j"$(nproc)" V=sc
 ```
 
 编译完成后的固件镜像会生成在 `bin/targets/<target>/<subtarget>/` 目录下。
+
+## GitHub Actions（workflow_dispatch）
+工作流：**Build ImmortalWrt firmware**（`.github/workflows/build-firmware.yml`）。
+
+输入：
+- `immortalwrt_ref`：可选的 `immortalwrt/immortalwrt` 分支、标签或 SHA；留空时使用上游默认分支，或仓库变量 `IMMORTALWRT_REF`。
+- `cache_epoch`：可选缓存命名空间；留空时使用仓库变量 `CACHE_EPOCH` 或 `v1`。
+
+行为：
+- 以 `submodules: false` 检出本仓库，然后在运行时把 `immortalwrt/immortalwrt` 检出到 `immortalwrt/`。
+- 使用现有 `cr6606/seed.config` 与 `tr3000/seed.config` 分别构建两个机型，并保留 `immortalwrt-*` Release 标签前缀兼容性。
+- 分离 `ccache` 与 `dl` 缓存，按机型、ImmortalWrt ref、seed hash 与 cache epoch 生成 key。
+- GitHub 缓存创建后不可原地修改。需要刷新时，修改 `cache_epoch` 输入或仓库变量 `CACHE_EPOCH`；工作流会从旧匹配缓存恢复，再保存到新的命名空间。
+- 成功后上传 7 天保留的构建产物，并发布包含固件和 manifest 的 Release。
+
+清理工作流：**Cleanup workflow runs and releases**（`.github/workflows/cleanup-runs-releases.yml`）会定期清理旧 workflow runs 与兼容的 `immortalwrt-*` Releases。
 
 ## 启用的包与功能对比
 

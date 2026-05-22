@@ -1,6 +1,6 @@
 # ImmortalWrt Firmware Builder
 
-[![ImmortalWrt Builder](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/builder.yml/badge.svg?branch=main)](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/builder.yml)
+[![ImmortalWrt Builder](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/build-firmware.yml/badge.svg?branch=main)](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/build-firmware.yml)
 [![Latest Release](https://img.shields.io/github/v/release/coachpo/immortalwrt-firmware-builder?sort=semver&style=flat-square&label=Release&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 [![Downloads (latest)](https://img.shields.io/github/downloads/coachpo/immortalwrt-firmware-builder/latest/total?style=flat-square&label=Downloads&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 
@@ -16,9 +16,10 @@ Each `seed.config` is a starting `.config` you expand with `make defconfig`, the
 ## Repository Layout
 - `tr3000/seed.config` — TR3000 feature-rich profile.
 - `cr6606/seed.config` — CR6606 lean profile.
-- `immortalwrt/` — ImmortalWrt source tree as a submodule (ref can be overridden in CI).
+- `immortalwrt/` — ignored runtime checkout location for ImmortalWrt, populated by local commands or CI.
 - `Dockerfile` — Reproducible Ubuntu 22.04 build environment with all toolchain deps.
-- `.github/workflows/builder.yml` — GitHub Actions workflow to build, cache, and release images.
+- `.github/workflows/build-firmware.yml` — GitHub Actions workflow to fetch ImmortalWrt, build, cache, and release images.
+- `.github/workflows/cleanup-runs-releases.yml` — scheduled cleanup for old workflow runs and compatible `immortalwrt-*` releases.
 
 ## Prerequisites (host build)
 Ubuntu/Debian build deps match the `Dockerfile`. Minimal one-liner:
@@ -26,20 +27,23 @@ Ubuntu/Debian build deps match the `Dockerfile`. Minimal one-liner:
 sudo apt-get update && sudo apt-get install -y \
   ack antlr3 asciidoc autoconf automake autopoint binutils gcc-multilib gettext flex gawk \
   bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar \
-  g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
-  libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
-  libreadline-dev libssl-dev libtool libyaml-dev lld llvm lrzsz mkisofs msmtp nano ninja-build \
+  g++-multilib git libgnutls28-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+  libglib2.0-dev libgmp-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+  libreadline-dev libssl-dev libtool libyaml-dev lld llvm lrzsz genisoimage msmtp nano ninja-build \
   p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-pyelftools \
   qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget \
   xmlto xxd zlib1g-dev zstd
 ```
 
 ## Quick Start (local build)
-Option A — use the bundled submodule:
+Option A — clone ImmortalWrt into this repo's ignored runtime path:
 ```bash
 git clone https://github.com/coachpo/immortalwrt-firmware-builder.git
 cd immortalwrt-firmware-builder
-git submodule update --init --recursive
+git clone --depth=1 https://github.com/immortalwrt/immortalwrt.git immortalwrt
+# Optional ref override, matching CI's immortalwrt_ref input:
+# git -C immortalwrt fetch --depth=1 origin <branch-tag-or-sha>
+# git -C immortalwrt checkout --detach FETCH_HEAD
 
 cd immortalwrt
 ./scripts/feeds update -a && ./scripts/feeds install -a
@@ -60,26 +64,30 @@ make -j"$(nproc)" V=sc
 Firmware images land under `bin/targets/<target>/<subtarget>/`.
 
 ## GitHub Actions (workflow_dispatch)
-Workflow: **01-build-immortalwrt-firmware** (`.github/workflows/builder.yml`).
+Workflow: **Build ImmortalWrt firmware** (`.github/workflows/build-firmware.yml`).
 
 Inputs:
-- `model`: `all` (default), `cr6606`, or `tr3000`.
-- `immortalwrt_ref`: optional branch/tag/SHA for the `immortalwrt` submodule.
-- `debug_build`: `false` by default; when `true` forces single-thread verbose build.
-- `jobs`: `auto` (nproc) or fixed `1/2/4/8/16`.
+- `immortalwrt_ref`: optional branch/tag/SHA for `immortalwrt/immortalwrt`; empty uses the upstream default branch or repository variable `IMMORTALWRT_REF`.
+- `cache_epoch`: optional cache namespace; empty uses repository variable `CACHE_EPOCH` or `v1`.
 
 Behavior:
-- Caches downloads, toolchains, targets, feeds, and ccache keyed by model/ref/seed hash.
-- Copies `matrix.model/seed.config` to `.config`, forces `CONFIG_CCACHE=y`, runs `make defconfig` then build.
-- Uploads artifacts per model (7-day retention) and, on success, publishes a release tag with binaries and manifests.
+- Checks out this repo with `submodules: false`, then checks out `immortalwrt/immortalwrt` into `immortalwrt/` at runtime.
+- Builds both `cr6606` and `tr3000` from the existing `matrix.model/seed.config`, forces `CONFIG_CCACHE=y`, runs `make defconfig`, then builds.
+- Restores separate `ccache` and `dl` caches keyed by model, ImmortalWrt ref, seed hash, and cache epoch.
+- GitHub caches are immutable. To refresh them, change `cache_epoch` (or repo variable `CACHE_EPOCH`); the workflow restores the nearest older matching cache and saves a fresh cache under the new namespace.
+- Uploads artifacts per model (7-day retention) and, on success, publishes an `immortalwrt-*` release tag with binaries and manifests.
+
+Cleanup workflow: **Cleanup workflow runs and releases** (`.github/workflows/cleanup-runs-releases.yml`) keeps old workflow runs and compatible `immortalwrt-*` releases pruned.
 
 ## Docker (reproducible build env)
 Build the image:
 ```bash
 docker build -t immortalwrt-builder .
 ```
-Run with the repo mounted (preserves downloads/caches on your host):
+Run with the repo mounted after cloning ImmortalWrt into the ignored runtime path:
 ```bash
+git clone --depth=1 https://github.com/immortalwrt/immortalwrt.git immortalwrt
+
 docker run --rm -it \
   -v "$(pwd)":/workdir \
   immortalwrt-builder bash
@@ -127,7 +135,7 @@ This table compares the features enabled by both seed configurations.
 - Re-run feeds if packages are missing: `./scripts/feeds update -a && ./scripts/feeds install -a`.
 - For noisy failures, try a single-thread verbose build: `make -j1 V=s`.
 - Free disk space before retrying large builds (`tmp`, `build_dir`, and cached downloads are the biggest users).
-- If caches confuse CI, rerun with a fresh seed hash (edit `seed.config` or clear caches).
+- If caches confuse CI, rerun with a new `cache_epoch` input or `CACHE_EPOCH` repository variable value; do not edit seed configs just to rotate caches.
 
 ## License
 
