@@ -1,0 +1,265 @@
+name: Build ImmortalWrt firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      immortalwrt_ref:
+        description: "ImmortalWrt git ref (branch, tag, or commit SHA; empty = default branch)"
+        type: string
+        required: false
+        default: ""
+      cache_epoch:
+        description: "Cache namespace/epoch; change it to create fresh ccache and dl caches"
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.immortalwrt_ref || vars.IMMORTALWRT_REF || 'default' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMMORTALWRT_REF: ${{ inputs.immortalwrt_ref || vars.IMMORTALWRT_REF || '' }}
+  CACHE_EPOCH: ${{ inputs.cache_epoch || vars.CACHE_EPOCH || 'v1' }}
+  CCACHE_MAX_SIZE: 4G
+
+jobs:
+  build:
+    name: Build ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          - cr6606
+          - tr3000
+
+    steps:
+      - name: Free disk space
+        continue-on-error: true
+        uses: AdityaGarg8/remove-unwanted-software@v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+          remove-large-packages: "false"
+          remove-cached-tools: "false"
+          remove-swapfile: "false"
+          verbose: "false"
+
+      - name: Checkout firmware builder repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Checkout ImmortalWrt source (default branch)
+        if: ${{ env.IMMORTALWRT_REF == '' }}
+        uses: actions/checkout@v6
+        with:
+          repository: immortalwrt/immortalwrt
+          path: immortalwrt
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Checkout ImmortalWrt source (requested ref)
+        if: ${{ env.IMMORTALWRT_REF != '' }}
+        uses: actions/checkout@v6
+        with:
+          repository: immortalwrt/immortalwrt
+          path: immortalwrt
+          ref: ${{ env.IMMORTALWRT_REF }}
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils gcc-multilib gettext flex gawk \
+            bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar \
+            g++-multilib git libgnutls28-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev lld llvm lrzsz genisoimage msmtp nano \
+            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Prepare cache keys and directories
+        id: cache-vars
+        run: |
+          mkdir -p immortalwrt/.ccache immortalwrt/dl
+          ref="${IMMORTALWRT_REF:-default}"
+          ref_safe="${ref//[^A-Za-z0-9._-]/_}"
+          seed_hash="$(sha256sum '${{ matrix.model }}/seed.config' | cut -d ' ' -f1)"
+          echo "ref_safe=${ref_safe}" >> "$GITHUB_OUTPUT"
+          echo "seed_hash=${seed_hash}" >> "$GITHUB_OUTPUT"
+          echo "ccache_key=${{ runner.os }}-ccache-${{ matrix.model }}-${ref_safe}-${seed_hash}-${CACHE_EPOCH}" >> "$GITHUB_OUTPUT"
+          echo "dl_key=${{ runner.os }}-dl-${{ matrix.model }}-${ref_safe}-${seed_hash}-${CACHE_EPOCH}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Cache namespace"
+            echo "ccache/dl caches are immutable once created."
+            echo "Change the workflow input \`cache_epoch\` or repository variable \`CACHE_EPOCH\` to restore from older matching caches and save refreshed caches under a new namespace."
+            echo "Current namespace: \`${CACHE_EPOCH}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore ccache
+        id: restore-ccache
+        continue-on-error: true
+        uses: actions/cache/restore@v5.0.4
+        with:
+          path: immortalwrt/.ccache
+          key: ${{ steps.cache-vars.outputs.ccache_key }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-${{ steps.cache-vars.outputs.seed_hash }}-
+            ${{ runner.os }}-ccache-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-
+            ${{ runner.os }}-ccache-${{ matrix.model }}-
+
+      - name: Restore downloads
+        id: restore-dl
+        continue-on-error: true
+        uses: actions/cache/restore@v5.0.4
+        with:
+          path: immortalwrt/dl
+          key: ${{ steps.cache-vars.outputs.dl_key }}
+          restore-keys: |
+            ${{ runner.os }}-dl-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-${{ steps.cache-vars.outputs.seed_hash }}-
+            ${{ runner.os }}-dl-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-
+            ${{ runner.os }}-dl-${{ matrix.model }}-
+
+      - name: Configure firmware
+        run: |
+          cd immortalwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cp "../${{ matrix.model }}/seed.config" .config
+          grep -q '^CONFIG_CCACHE=y' .config || echo 'CONFIG_CCACHE=y' >> .config
+          make defconfig
+
+      - name: Build firmware
+        id: compile
+        run: |
+          cd immortalwrt
+          export CCACHE_DIR="$(pwd)/.ccache"
+          ccache -M "${CCACHE_MAX_SIZE}"
+          jobs="$(nproc)"
+          printf "%s thread compile\n" "${jobs}"
+          make -j"${jobs}" || make -j1 V=s
+          echo "status=success" >> "$GITHUB_OUTPUT"
+          echo "file_date=_$(date +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Cleanup build workspace
+        if: ${{ !cancelled() && steps.compile.outputs.status == 'success' }}
+        run: |
+          echo "Disk usage before cleanup:"
+          df -h
+          rm -rf immortalwrt/tmp 2>/dev/null || true
+          find immortalwrt -name "*.log" -size +100M -delete 2>/dev/null || true
+          echo "Disk usage after cleanup:"
+          df -h
+
+      - name: Ccache stats
+        if: ${{ !cancelled() }}
+        run: CCACHE_DIR=immortalwrt/.ccache ccache -s || true
+
+      - name: Save ccache
+        if: ${{ !cancelled() && steps.restore-ccache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v5.0.4
+        with:
+          path: immortalwrt/.ccache
+          key: ${{ steps.cache-vars.outputs.ccache_key }}
+
+      - name: Save downloads
+        if: ${{ !cancelled() && steps.restore-dl.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v5.0.4
+        with:
+          path: immortalwrt/dl
+          key: ${{ steps.cache-vars.outputs.dl_key }}
+
+      - name: Collect firmware files
+        id: collect
+        run: |
+          if [ "${{ matrix.model }}" = "tr3000" ]; then
+            dir="immortalwrt/bin/targets/mediatek/filogic"
+            echo "files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-bl31-uboot.fip" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-initramfs-recovery.itb" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-preloader.bin" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-squashfs-sysupgrade.itb" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            dir="immortalwrt/bin/targets/ramips/mt7621"
+            echo "files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-initramfs-kernel.bin" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-squashfs-firmware.bin" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-squashfs-sysupgrade.bin" >> "$GITHUB_OUTPUT"
+            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606.manifest" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload firmware files
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: immortalwrt_firmware_${{ matrix.model }}${{ steps.compile.outputs.file_date }}
+          path: ${{ steps.collect.outputs.files }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  release:
+    name: Release firmware
+    if: ${{ always() && needs.build.result == 'success' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Organize release files by model
+        run: |
+          mkdir -p release/tr3000 release/cr6606
+          find release -type f \( -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.fip' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.itb' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.bin' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.manifest' \) -exec cp -f {} release/tr3000/ \;
+          find release -type f \( -name 'immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-*.bin' -o -name 'immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606*.manifest' \) -exec cp -f {} release/cr6606/ \;
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          version_prefixed="immortalwrt-${IMMORTALWRT_REF:-default}"
+          version_safe="$(echo "$version_prefixed" | sed 's/[^A-Za-z0-9._-]/_/g')"
+          date_tag="$(date +"%Y%m%d-%H%M")"
+          echo "release_tag=${version_safe}-build${GITHUB_RUN_NUMBER}-${date_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize artifacts
+        run: |
+          source_label="${IMMORTALWRT_REF:-default branch}"
+          printf "ImmortalWrt %s firmware for\n- Cudy TR3000 (Filogic)\n- Xiaomi CR6606 (MT7621)\n" "$source_label" > release.md
+          cat release.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload firmware to release
+        uses: softprops/action-gh-release@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          body_path: release.md
+          files: |
+            release/tr3000/*
+            release/cr6606/*
