@@ -1,4 +1,4 @@
-name: 99-cleanup
+name: Cleanup workflow runs and releases
 
 on:
   schedule:
