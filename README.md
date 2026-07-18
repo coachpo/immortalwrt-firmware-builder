@@ -4,7 +4,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/coachpo/immortalwrt-firmware-builder?sort=semver&style=flat-square&label=Release&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 [![Downloads (latest)](https://img.shields.io/github/downloads/coachpo/immortalwrt-firmware-builder/latest/total?style=flat-square&label=Downloads&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 
-English | [简体中文](README_zh.md)
+English | [简体中文](README_CN.md)
 
 Firmware seeds and build automation to produce ImmortalWrt images for two routers:
 
