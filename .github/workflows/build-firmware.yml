@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       immortalwrt_ref:
-        description: "ImmortalWrt git ref (branch, tag, or commit SHA; empty = default branch)"
+        description: "ImmortalWrt git ref (branch, tag, or SHA; empty = IMMORTALWRT_REF or upstream default branch)"
         type: string
         required: false
         default: ""
       cache_epoch:
-        description: "Cache namespace/epoch; change it to create fresh ccache and dl caches"
+        description: "Cache namespace/epoch; change it to save refreshed ccache and dl snapshots"
         type: string
         required: false
         default: ""
@@ -28,17 +28,10 @@ env:
 
 jobs:
   build:
-    name: Build ${{ matrix.model }}
+    name: Build TR3000
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        model:
-          - cr6606
-          - tr3000
-
     steps:
       - name: Free disk space
         continue-on-error: true
@@ -101,11 +94,11 @@ jobs:
           mkdir -p immortalwrt/.ccache immortalwrt/dl
           ref="${IMMORTALWRT_REF:-default}"
           ref_safe="${ref//[^A-Za-z0-9._-]/_}"
-          seed_hash="$(sha256sum '${{ matrix.model }}/seed.config' | cut -d ' ' -f1)"
+          seed_hash="$(sha256sum 'tr3000/seed.config' | cut -d ' ' -f1)"
           echo "ref_safe=${ref_safe}" >> "$GITHUB_OUTPUT"
           echo "seed_hash=${seed_hash}" >> "$GITHUB_OUTPUT"
-          echo "ccache_key=${{ runner.os }}-ccache-${{ matrix.model }}-${ref_safe}-${seed_hash}-${CACHE_EPOCH}" >> "$GITHUB_OUTPUT"
-          echo "dl_key=${{ runner.os }}-dl-${{ matrix.model }}-${ref_safe}-${seed_hash}-${CACHE_EPOCH}" >> "$GITHUB_OUTPUT"
+          echo "ccache_key=${{ runner.os }}-ccache-tr3000-${ref_safe}-${seed_hash}-${CACHE_EPOCH}" >> "$GITHUB_OUTPUT"
+          echo "dl_key=${{ runner.os }}-dl-tr3000-${ref_safe}-${seed_hash}-${CACHE_EPOCH}" >> "$GITHUB_OUTPUT"
           {
             echo "### Cache namespace"
             echo "ccache/dl caches are immutable once created."
@@ -121,9 +114,9 @@ jobs:
           path: immortalwrt/.ccache
           key: ${{ steps.cache-vars.outputs.ccache_key }}
           restore-keys: |
-            ${{ runner.os }}-ccache-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-${{ steps.cache-vars.outputs.seed_hash }}-
-            ${{ runner.os }}-ccache-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-
-            ${{ runner.os }}-ccache-${{ matrix.model }}-
+            ${{ runner.os }}-ccache-tr3000-${{ steps.cache-vars.outputs.ref_safe }}-${{ steps.cache-vars.outputs.seed_hash }}-
+            ${{ runner.os }}-ccache-tr3000-${{ steps.cache-vars.outputs.ref_safe }}-
+            ${{ runner.os }}-ccache-tr3000-
 
       - name: Restore downloads
         id: restore-dl
@@ -133,16 +126,16 @@ jobs:
           path: immortalwrt/dl
           key: ${{ steps.cache-vars.outputs.dl_key }}
           restore-keys: |
-            ${{ runner.os }}-dl-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-${{ steps.cache-vars.outputs.seed_hash }}-
-            ${{ runner.os }}-dl-${{ matrix.model }}-${{ steps.cache-vars.outputs.ref_safe }}-
-            ${{ runner.os }}-dl-${{ matrix.model }}-
+            ${{ runner.os }}-dl-tr3000-${{ steps.cache-vars.outputs.ref_safe }}-${{ steps.cache-vars.outputs.seed_hash }}-
+            ${{ runner.os }}-dl-tr3000-${{ steps.cache-vars.outputs.ref_safe }}-
+            ${{ runner.os }}-dl-tr3000-
 
       - name: Configure firmware
         run: |
           cd immortalwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          cp "../${{ matrix.model }}/seed.config" .config
+          cp ../tr3000/seed.config .config
           grep -q '^CONFIG_CCACHE=y' .config || echo 'CONFIG_CCACHE=y' >> .config
           make defconfig
 
@@ -191,29 +184,19 @@ jobs:
       - name: Collect firmware files
         id: collect
         run: |
-          if [ "${{ matrix.model }}" = "tr3000" ]; then
-            dir="immortalwrt/bin/targets/mediatek/filogic"
-            echo "files<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-bl31-uboot.fip" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-initramfs-recovery.itb" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-preloader.bin" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-squashfs-sysupgrade.itb" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-          else
-            dir="immortalwrt/bin/targets/ramips/mt7621"
-            echo "files<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-initramfs-kernel.bin" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-squashfs-firmware.bin" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-squashfs-sysupgrade.bin" >> "$GITHUB_OUTPUT"
-            echo "$dir/immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606.manifest" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-          fi
+          dir="immortalwrt/bin/targets/mediatek/filogic"
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-bl31-uboot.fip" >> "$GITHUB_OUTPUT"
+          echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-initramfs-recovery.itb" >> "$GITHUB_OUTPUT"
+          echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-preloader.bin" >> "$GITHUB_OUTPUT"
+          echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-squashfs-sysupgrade.itb" >> "$GITHUB_OUTPUT"
+          echo "$dir/immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware files
         uses: actions/upload-artifact@v7.0.0
         with:
-          name: immortalwrt_firmware_${{ matrix.model }}${{ steps.compile.outputs.file_date }}
+          name: immortalwrt_firmware_tr3000${{ steps.compile.outputs.file_date }}
           path: ${{ steps.collect.outputs.files }}
           if-no-files-found: error
           retention-days: 7
@@ -233,11 +216,10 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Organize release files by model
+      - name: Organize TR3000 release files
         run: |
-          mkdir -p release/tr3000 release/cr6606
+          mkdir -p release/tr3000
           find release -type f \( -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.fip' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.itb' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.bin' -o -name 'immortalwrt-mediatek-filogic-cudy_tr3000-*.manifest' \) -exec cp -f {} release/tr3000/ \;
-          find release -type f \( -name 'immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606-*.bin' -o -name 'immortalwrt-ramips-mt7621-xiaomi_mi-router-cr6606*.manifest' \) -exec cp -f {} release/cr6606/ \;
 
       - name: Generate release tag
         id: tag
@@ -250,7 +232,7 @@ jobs:
       - name: Summarize artifacts
         run: |
           source_label="${IMMORTALWRT_REF:-default branch}"
-          printf "ImmortalWrt %s firmware for\n- Cudy TR3000 (Filogic)\n- Xiaomi CR6606 (MT7621)\n" "$source_label" > release.md
+          printf "ImmortalWrt %s firmware for\n- Cudy TR3000 (Filogic)\n" "$source_label" > release.md
           cat release.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload firmware to release
@@ -262,4 +244,3 @@ jobs:
           body_path: release.md
           files: |
             release/tr3000/*
-            release/cr6606/*

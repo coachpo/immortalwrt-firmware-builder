@@ -1,28 +1,27 @@
 # ImmortalWrt Firmware Builder
 
 [![ImmortalWrt Builder](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/build-firmware.yml/badge.svg?branch=main)](https://github.com/coachpo/immortalwrt-firmware-builder/actions/workflows/build-firmware.yml)
-[![Latest Release](https://img.shields.io/github/v/release/coachpo/immortalwrt-firmware-builder?sort=semver&style=flat-square&label=Release&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/coachpo/immortalwrt-firmware-builder?sort=date&style=flat-square&label=Release&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 [![Downloads (latest)](https://img.shields.io/github/downloads/coachpo/immortalwrt-firmware-builder/latest/total?style=flat-square&label=Downloads&logo=github)](https://github.com/coachpo/immortalwrt-firmware-builder/releases/latest)
 
 English | [简体中文](README_CN.md)
 
-Firmware seeds and build automation to produce ImmortalWrt images for two routers:
+Firmware seed and build automation for **Cudy TR3000 v1 (MediaTek Filogic, OpenWrt U-Boot layout)**. The selected device profile is `cudy_tr3000-v1-ubootmod`, as defined in the [upstream device definitions](https://github.com/immortalwrt/immortalwrt/blob/master/target/linux/mediatek/image/filogic.mk). Use images for this hardware revision and bootloader layout.
 
-- **Cudy TR3000 (MediaTek Filogic)** — feature-rich build with USB, storage, and Samba.
-- **Xiaomi CR6606 (MT7621)** — leaner build focused on core routing features.
-
-Each `seed.config` is a starting `.config` you expand with `make defconfig`, then optionally refine with `make menuconfig`.
+The [seed configuration](tr3000/seed.config) is a starting `.config` to expand with `make defconfig`, then optionally refine with `make menuconfig`. It selects LuCI, VPN tools, DoH, QoS, and USB tethering/modem packages. Final packages and device defaults depend on the selected ImmortalWrt source and feeds; inspect the generated `.config` and firmware `.manifest` to confirm the result.
 
 ## Repository Layout
-- `tr3000/seed.config` — TR3000 feature-rich profile.
-- `cr6606/seed.config` — CR6606 lean profile.
+
+- `tr3000/seed.config` — TR3000 v1 U-Boot layout configuration.
 - `immortalwrt/` — ignored runtime checkout location for ImmortalWrt, populated by local commands or CI.
-- `Dockerfile` — Reproducible Ubuntu 22.04 build environment with all toolchain deps.
-- `.github/workflows/build-firmware.yml` — GitHub Actions workflow to fetch ImmortalWrt, build, cache, and release images.
-- `.github/workflows/cleanup-runs-releases.yml` — scheduled cleanup for old workflow runs and compatible `immortalwrt-*` releases.
+- `Dockerfile` — Ubuntu 22.04 build environment, running as the non-root `builder` user.
+- `.github/workflows/build-firmware.yml` — manually triggered workflow to fetch ImmortalWrt, build, cache, and publish a release.
+- `.github/workflows/cleanup-runs-releases.yml` — scheduled cleanup of workflow runs and `immortalwrt-*` releases.
 
 ## Prerequisites (host build)
-Ubuntu/Debian build deps match the `Dockerfile`. Minimal one-liner:
+
+The dependency list below matches the Dockerfile's Ubuntu 22.04 environment and assumes an x86-64 Linux host. Package availability may differ on other Ubuntu/Debian releases. Run the firmware build as a non-root user.
+
 ```bash
 sudo apt-get update && sudo apt-get install -y \
   ack antlr3 asciidoc autoconf automake autopoint binutils gcc-multilib gettext flex gawk \
@@ -36,57 +35,90 @@ sudo apt-get update && sudo apt-get install -y \
 ```
 
 ## Quick Start (local build)
+
 Option A — clone ImmortalWrt into this repo's ignored runtime path:
+
 ```bash
 git clone https://github.com/coachpo/immortalwrt-firmware-builder.git
 cd immortalwrt-firmware-builder
-git clone --depth=1 https://github.com/immortalwrt/immortalwrt.git immortalwrt
+git clone --depth=1 --recurse-submodules https://github.com/immortalwrt/immortalwrt.git immortalwrt
 # Optional ref override, matching CI's immortalwrt_ref input:
 # git -C immortalwrt fetch --depth=1 origin <branch-tag-or-sha>
 # git -C immortalwrt checkout --detach FETCH_HEAD
+# git -C immortalwrt submodule update --init --recursive
 
 cd immortalwrt
 ./scripts/feeds update -a && ./scripts/feeds install -a
-cp ../tr3000/seed.config .config   # or ../cr6606/seed.config
+cp ../tr3000/seed.config .config
 make defconfig
 make menuconfig    # optional tweaks
 make -j"$(nproc)" V=sc
 ```
 
-Option B — drop a seed into your own ImmortalWrt/OpenWrt tree:
+Option B — use an existing ImmortalWrt source tree. From its root directory:
+
 ```bash
-cp /path/to/immortalwrt-firmware-builder/tr3000/seed.config .config   # or cr6606/seed.config
+./scripts/feeds update -a && ./scripts/feeds install -a
+cp /path/to/immortalwrt-firmware-builder/tr3000/seed.config .config
 make defconfig
-make menuconfig   # optional
+make menuconfig    # optional tweaks
 make -j"$(nproc)" V=sc
 ```
 
-Firmware images land under `bin/targets/<target>/<subtarget>/`.
+The source and feeds must provide the selected device profile and packages. This seed includes ImmortalWrt-specific packages and is not guaranteed to work unchanged in an OpenWrt tree.
+
+Firmware images and manifests land under `bin/targets/mediatek/filogic/` within the ImmortalWrt tree.
 
 ## GitHub Actions (workflow_dispatch)
-Workflow: **Build ImmortalWrt firmware** (`.github/workflows/build-firmware.yml`).
 
-Inputs:
-- `immortalwrt_ref`: optional branch/tag/SHA for `immortalwrt/immortalwrt`; empty uses the upstream default branch or repository variable `IMMORTALWRT_REF`.
-- `cache_epoch`: optional cache namespace; empty uses repository variable `CACHE_EPOCH` or `v1`.
+Open **Actions → Build ImmortalWrt firmware → Run workflow**. A push alone does not trigger a firmware build. Once the build job succeeds, the release job runs automatically; there is no publish toggle.
+
+Inputs and fallback order:
+
+- `immortalwrt_ref`: non-empty workflow input → repository variable `IMMORTALWRT_REF` → upstream default branch. Accepts a branch, tag, or commit SHA.
+- `cache_epoch`: non-empty workflow input → repository variable `CACHE_EPOCH` → `v1`.
 
 Behavior:
-- Checks out this repo with `submodules: false`, then checks out `immortalwrt/immortalwrt` into `immortalwrt/` at runtime.
-- Builds both `cr6606` and `tr3000` from the existing `matrix.model/seed.config`, forces `CONFIG_CCACHE=y`, runs `make defconfig`, then builds.
-- Restores separate `ccache` and `dl` caches keyed by model, ImmortalWrt ref, seed hash, and cache epoch.
-- GitHub caches are immutable. To refresh them, change `cache_epoch` (or repo variable `CACHE_EPOCH`); the workflow restores the nearest older matching cache and saves a fresh cache under the new namespace.
-- Uploads artifacts per model (7-day retention) and, on success, publishes an `immortalwrt-*` release tag with binaries and manifests.
 
-Cleanup workflow: **Cleanup workflow runs and releases** (`.github/workflows/cleanup-runs-releases.yml`) keeps old workflow runs and compatible `immortalwrt-*` releases pruned.
+- Checks out this repository, then checks out `immortalwrt/immortalwrt` into `immortalwrt/` with recursive submodules.
+- Builds on `ubuntu-latest`, while the Dockerfile uses Ubuntu 22.04; these are separate build environments.
+- Updates and installs feeds, copies `tr3000/seed.config`, enables `CONFIG_CCACHE=y`, and runs `make defconfig`.
+- Builds with all available CPU threads, retrying with `make -j1 V=s` if the parallel build fails.
+- Uses a 4 GB ccache limit. Separate `ccache` and `dl` keys contain runner OS, `tr3000`, source ref, seed hash, and cache epoch.
+- Changing `cache_epoch` to a new value creates a new cache key, but restore prefixes can still reuse an older matching cache. This refreshes the cache namespace; it does not guarantee an empty cache.
+- Uploads the selected firmware files as `immortalwrt_firmware_tr3000_<YYYYMMDDHHMM>` with 7-day retention, then publishes an `immortalwrt-<ref-or-default>-build<run-number>-<YYYYMMDD-HHMM>` release tag. Unsupported tag characters are replaced with underscores.
 
-## Docker (reproducible build env)
-Build the image:
-```bash
-docker build -t immortalwrt-builder .
+The collection step expects these files under `immortalwrt/bin/targets/mediatek/filogic/`:
+
+```text
+immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-bl31-uboot.fip
+immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-initramfs-recovery.itb
+immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-preloader.bin
+immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-squashfs-sysupgrade.itb
+immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest
 ```
-Run with the repo mounted after cloning ImmortalWrt into the ignored runtime path:
+
+The paths are fixed in the workflow. If a selected source ref changes output naming, adjust the collection and release file patterns to match that ref.
+
+The cleanup workflow runs daily at 03:00 UTC and can also be started manually. It deletes completed runs with conclusions `action_required`, `cancelled`, `failure`, or `skipped`, and keeps the latest 10 successful runs per workflow. The cleanup action also removes orphaned runs of deleted workflows. Release cleanup keeps the latest 10 non-draft releases whose tags start with `immortalwrt-`, deleting older matching releases and their tags.
+
+## Docker Build Environment
+
+From this repository's root on an x86-64 Linux host, build an image with the current user's UID/GID so the container can write to the mounted source tree:
+
 ```bash
-git clone --depth=1 https://github.com/immortalwrt/immortalwrt.git immortalwrt
+docker build \
+  --build-arg USER_UID="$(id -u)" \
+  --build-arg USER_GID="$(id -g)" \
+  -t immortalwrt-builder .
+```
+
+The Dockerfile defaults to UID 1001 and GID 121 if the build arguments are omitted. Use a non-root UID and ensure both IDs are unassigned in the base image.
+
+Clone the source if `immortalwrt/` is not already present, then start the container from the builder repository's root:
+
+```bash
+git clone --depth=1 --recurse-submodules https://github.com/immortalwrt/immortalwrt.git immortalwrt
 
 docker run --rm -it \
   -v "$(pwd)":/workdir \
@@ -94,49 +126,44 @@ docker run --rm -it \
 # inside the container:
 cd /workdir/immortalwrt
 ./scripts/feeds update -a && ./scripts/feeds install -a
-cp ../tr3000/seed.config .config   # or ../cr6606/seed.config
+cp ../tr3000/seed.config .config
 make defconfig && make -j"$(nproc)" V=sc
 ```
 
-## Seed Feature Comparison
-This table compares the features enabled by both seed configurations.
+The Dockerfile provides a shared build environment, but its base image and apt packages are not pinned, and the default source/feeds can change. It does not guarantee reproducible firmware binaries.
 
-| CR6606 | TR3000 | Feature | Purpose | Notes |
-| --- | --- | --- | --- | --- |
-| ✅ | ✅ | LuCI Web UI + themes | Web management with themes (Bootstrap/Argon + Chinese UI) | |
-| ✅ | ✅ | Web server (LuCI) | Serves LuCI over HTTP with uHTTPd | |
-| ✅ | ✅ | Wireless | Wi-Fi 6 support with MT7915E driver, regulatory database (wireless-regdb), and WPA2/3 (wpad-openssl) | |
-| ✅ | ✅ | QoS (nftables) | Simple bandwidth/QoS rules with nft-qos + Chinese UI | |
-| ✅ | ✅ | Diagnostics | Basic troubleshooting tools (iperf3, tcpdump, htop) | |
-| ✅ | ✅ | Web terminal | Shell access in browser (ttyd) + Chinese UI | |
-| ✅ | ✅ | Local discovery | mDNS/Bonjour and name resolution (Avahi, nss-mdns) | |
-| ✅ | ✅ | UPnP IGD | Auto port forwarding (miniupnpd-nftables) + Chinese UI | |
-| ✅ | ✅ | DoH via Cloudflared | DNS over HTTPS tunnel with LuCI UI + Chinese UI | |
-| ✅ | ✅ | HTTPS DNS Proxy | Lightweight DoH client with LuCI UI + Chinese UI | |
-| ✅ | ✅ | Adblock | DNS-based ad/malware blocking + Chinese UI | |
-| ✅ | ✅ | DNS/DHCP backend | Full-featured dnsmasq (DNSSEC, DHCPv6, TFTP, auth) | |
-| ✅ | ✅ | TLS/crypto | OpenSSL TLS backend (curl/wget-ssl) with system OpenSSL config | |
-| ✅ | ✅ | IPv6 support | DHCPv6 and IPv6 DHCP services (odhcp6c, odhcpd) | |
-| ✅ | ✅ | Firewall | nftables-based firewall4 | |
-| ✅ | ✅ | CA certificates | Root certificate bundle for TLS validation | |
-| ✅ | ✅ | Package Manager UI | Manage packages in LuCI + Chinese UI | |
-| ✅ | ✅ | Network tools | socat with LuCI interface + Chinese UI | |
-| ✅ | ✅ | Advanced networking | Extensive networking tools (curl, wget, arping, etc.) | |
-| ✅ | ✅ | Editor (vim) | Full-featured CLI editor | |
-| ❌ | ✅ | File sharing | Samba4 server with Avahi, NetBIOS, VFS, and WSDD2 + Chinese UI | CR6606 lacks USB ports |
-| ❌ | ✅ | USB printing | Print server (p910nd JetDirect) with LuCI UI + Chinese UI | CR6606 lacks USB ports |
-| ❌ | ✅ | Disk management | LuCI disk manager with Btrfs, NTFS3 support + Chinese UI | CR6606 lacks USB ports |
-| ❌ | ✅ | Storage & filesystems | Full filesystem support (ext4, Btrfs, exFAT, NTFS3) | CR6606 lacks USB ports |
-| ❌ | ✅ | USB networking | Extensive USB-to-Ethernet adapter support | CR6606 lacks USB ports |
-| ❌ | ✅ | USB tools | USB utilities and device identification | CR6606 lacks USB ports |
-| ❌ | ✅ | File manager | Web file manager in LuCI + Chinese UI | CR6606 lacks USB ports |
+## Explicit Seed Selections
+
+These are the packages explicitly selected in `tr3000/seed.config`. Device defaults and dependencies are resolved by `make defconfig`.
+
+| Feature | Selected packages |
+| --- | --- |
+| LuCI and Argon theme | `luci`, `luci-theme-argon`, `luci-app-argon-config`, `luci-i18n-base-zh-cn`, `luci-i18n-argon-config-zh-cn` |
+| Web management services | `rpcd`, `uhttpd`, `uhttpd-mod-ubus` |
+| CA certificates | `ca-certificates` |
+| QoS | `nft-qos`, `luci-app-nft-qos`, `luci-i18n-nft-qos-zh-cn` |
+| Diagnostics | `htop`, `iperf3`, `tcpdump-mini` |
+| DNS over HTTPS | `https-dns-proxy`, `luci-app-https-dns-proxy`, `luci-i18n-https-dns-proxy-zh-cn` |
+| DNS/DHCP | `dnsmasq-full` |
+| Firewall UI | `luci-app-firewall`, `luci-i18n-firewall-zh-cn` |
+| WireGuard VPN | `wireguard-tools`, `kmod-wireguard`, `luci-proto-wireguard`, `luci-i18n-wireguard-zh-cn` |
+| OpenVPN (mbedTLS) | `openvpn-mbedtls`, `luci-proto-openvpn` |
+| Tailscale | `tailscale`, `luci-app-tailscale-community` |
+| UPnP | `miniupnpd-nftables`, `luci-app-upnp`, `luci-i18n-upnp-zh-cn` |
+| USB tethering | `kmod-usb-net-rndis`, `kmod-usb-net-cdc-ncm` |
+| USB cellular modems | `usb-modeswitch`, `uqmi`, `umbim`, `ppp`, `comgt`, `kmod-usb-serial-option`, `kmod-usb-acm` |
+| Timezone data | `zoneinfo-core`, `zoneinfo-europe` |
+
+The seed enables Simplified Chinese LuCI translations with `CONFIG_LUCI_LANG_zh_Hans=y` and explicitly deselects `default-settings-chn`.
 
 ## Troubleshooting
-- Re-run feeds if packages are missing: `./scripts/feeds update -a && ./scripts/feeds install -a`.
-- For noisy failures, try a single-thread verbose build: `make -j1 V=s`.
-- Free disk space before retrying large builds (`tmp`, `build_dir`, and cached downloads are the biggest users).
-- If caches confuse CI, rerun with a new `cache_epoch` input or `CACHE_EPOCH` repository variable value; do not edit seed configs just to rotate caches.
+
+- Re-run feeds if packages are missing: `./scripts/feeds update -a && ./scripts/feeds install -a`. Confirm the selected source and feeds contain the package symbols requested by the seed.
+- For build failures, try a single-thread verbose build: `make -j1 V=s`.
+- Check free disk space before retrying large builds; build output, staging files, and downloaded sources consume substantial space.
+- If artifact upload finds no files, compare the generated filenames with the workflow's fixed collection paths.
+- To refresh CI cache snapshots, use a new `cache_epoch` value. Older cache contents may still be restored through the fallback prefixes.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see [LICENSE](LICENSE).
