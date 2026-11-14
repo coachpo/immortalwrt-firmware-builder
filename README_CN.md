@@ -28,7 +28,7 @@
 
 ## 主机构建依赖
 
-使用 x86-64 Linux 主机、大小写敏感文件系统和非 root 构建用户。Ubuntu 22.04 依赖列表统一维护在 [Dockerfile](Dockerfile) 的 `apt-get install` 段；可在匹配的主机安装这些包，或使用下文的容器。固件 CI 单独安装依赖，使用 `ubuntu-24.04`，不使用该 Docker 镜像。
+使用 x86-64 Linux 主机、大小写敏感文件系统和非 root 构建用户。Ubuntu 22.04 依赖列表统一维护在 [Dockerfile](Dockerfile) 的 `apt-get install` 段；可在匹配的主机安装这些包，或使用下文的容器。固件 CI 单独安装依赖，使用 `ubuntu-latest`（目前为 Ubuntu 26.04），不使用该 Docker 镜像。
 
 ## 快速开始
 
@@ -69,7 +69,7 @@ make -j"$(nproc)" V=sc
 行为：
 
 - 检出本仓库，然后将 `immortalwrt/immortalwrt` 检出到 `immortalwrt/`，递归检出子模块。
-- 固件编译固定使用 `ubuntu-24.04`：所选 ImmortalWrt 版本要求 GNU 主机工具，不能通过 Ubuntu 26.04 的 `install` 检查。快速检查和发布任务仍可使用 `ubuntu-latest`；Dockerfile 仍是独立的 Ubuntu 22.04 构建环境。不得使用 `FORCE=1` 跳过源码前置检查。
+- 固件编译跟随 `ubuntu-latest`（目前为 Ubuntu 26.04）。所选 ImmortalWrt 版本要求 GNU 主机工具，CI 因此选择 Ubuntu 官方的 `coreutils-from-gnu` provider 替代默认 uutils，并在配置前验证 GNU `install`。[Ubuntu 官方切换说明](https://ubuntu.com/server/docs/reference/other-tools/sudo-rs/)解释了必需的 `--allow-remove-essential` 选项；只在一次性 runner 上切换 provider，不用 `FORCE=1` 绕过源码检查。Dockerfile 仍是独立的 Ubuntu 22.04 构建环境。
 - 执行 `python3 scripts/configure.py immortalwrt --ccache`，复用本地配置流程并启用 `CONFIG_CCACHE=y`。脚本展开配置后检查关键选项。
 - 使用所有可用 CPU 线程编译；并行编译失败时，用 `make -j1 V=s` 重试。
 - ccache 容量上限为 4 GB。独立的 `ccache` 与 `dl` key 包含 runner 操作系统及架构、`tr3000`、源码 ref、seed hash、cache epoch、运行 ID 与尝试次数。稳定恢复前缀复用最近匹配快照，每次运行尝试自动保存新快照，默认分支变化也无需手动刷新。ccache 仅在编译成功后保存；下载缓存可在配置成功但编译失败时保存。

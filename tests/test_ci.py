@@ -124,7 +124,7 @@ class ProvenanceTests(unittest.TestCase):
             "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
             "GITHUB_REPOSITORY": "example/builder", "IMMORTALWRT_REF": "master",
             "CONFIGURATION_OUTCOME": "success", "COMPILATION_OUTCOME": "success",
-            "ImageOS": "ubuntu24", "ImageVersion": "test-image-version",
+            "ImageOS": "ubuntu26", "ImageVersion": "test-image-version",
         })
         info = json.loads((destination / "build-info.json").read_text())
         expected = ci.git_output(self.tree, "rev-parse", "HEAD").strip()
@@ -132,7 +132,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(info["builder_commit"], ci.git_output(ROOT, "rev-parse", "HEAD").strip())
         self.assertEqual(info["feeds"], {"vantage": expected})
         self.assertTrue(info["config_available"])
-        self.assertEqual(info["runner_image"], "ubuntu24")
+        self.assertEqual(info["runner_image"], "ubuntu26")
         self.assertEqual(info["runner_image_version"], "test-image-version")
         self.assertEqual(info["run_url"], "https://github.com/example/builder/actions/runs/123")
         self.assertEqual((destination / "firmware.config").read_bytes(), config)

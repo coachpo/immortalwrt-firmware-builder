@@ -28,7 +28,7 @@ The shared [configuration helper](scripts/configure.py) prepares feeds and image
 
 ## Prerequisites (host build)
 
-Use an x86-64 Linux host, a case-sensitive filesystem and a non-root build user. The Ubuntu 22.04 dependency list is maintained in the [Dockerfile](Dockerfile) (`apt-get install`); install those packages on a matching host or use the container below. Firmware CI installs dependencies separately on `ubuntu-24.04`, not in the Docker image.
+Use an x86-64 Linux host, a case-sensitive filesystem and a non-root build user. The Ubuntu 22.04 dependency list is maintained in the [Dockerfile](Dockerfile) (`apt-get install`); install those packages on a matching host or use the container below. Firmware CI installs dependencies separately on `ubuntu-latest` (currently Ubuntu 26.04), not in the Docker image.
 
 ## Quick Start (local build)
 
@@ -69,7 +69,7 @@ Inputs and fallback order:
 Behavior:
 
 - Checks out this repository, then checks out `immortalwrt/immortalwrt` into `immortalwrt/` with recursive submodules.
-- Firmware compilation is pinned to `ubuntu-24.04`: selected ImmortalWrt releases require GNU host tools and reject Ubuntu 26.04's `install` implementation. Quick checks and the release job can use `ubuntu-latest`; the Dockerfile remains a separate Ubuntu 22.04 build environment. Do not bypass source prerequisite checks with `FORCE=1`.
+- Firmware compilation follows `ubuntu-latest` (currently Ubuntu 26.04). Selected ImmortalWrt releases require GNU host tools, so CI selects Ubuntu's official `coreutils-from-gnu` provider instead of the default uutils provider, and verifies GNU `install` before configuration. The [Ubuntu provider-switch documentation](https://ubuntu.com/server/docs/reference/other-tools/sudo-rs/) explains the required `--allow-remove-essential` option; this switches providers only on the disposable runner. No source prerequisites are suppressed with `FORCE=1`. The Dockerfile remains a separate Ubuntu 22.04 build environment.
 - Runs `python3 scripts/configure.py immortalwrt --ccache`, reusing local preparation and enabling `CONFIG_CCACHE=y`. The helper checks critical selections after expanding the configuration.
 - Builds with all available CPU threads, retrying with `make -j1 V=s` if the parallel build fails.
 - Uses a 4 GB ccache limit. Separate `ccache` and `dl` keys contain runner OS/architecture, `tr3000`, source ref, seed hash, cache epoch, run ID and attempt. Stable restore prefixes reuse the latest matching snapshot; each run attempt saves a new snapshot automatically, including for a moving default branch. Save ccache only after successful compilation; downloads can be saved after successful configuration even if compilation fails.
