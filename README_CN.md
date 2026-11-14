@@ -133,7 +133,11 @@ Dockerfile 提供统一的构建环境，但基础镜像、apt 软件包版本�
 
 [最后执行的首次启动脚本](tr3000/files/etc/uci-defaults/zzzz-vantage-theme) 在软件包默认设置后选定 `luci.main.mediaurlbase=/luci-static/vantage`。首次执行也会覆盖 sysupgrade 保留的主题选择；其他保留的设备设置不做迁移。移除 Argon 及其配置界面、翻译的显式选择。Bootstrap 由 `luci` → `luci-light` 实际依赖保留，不是默认主题。
 
-**兼容性边界：** 源码 ref 按工作流输入、仓库变量、上游默认分支依次解析。远端仓库变量目前为 `v24.10.2`，对应源码 `cee53da5b58c6241eced0ef17956adda5515634b` 和固定的 LuCI `dbf5de06f1f3989fab244cc22a43deaa1e3b77b2`；已经验证 Vantage 主题及中文翻译包的元数据可在该树解析。本地示例未指定 ref 时仍跟随 master（`SNAPSHOT`）。之前检查的 master 源码 `a4ba8240d8a1aaef7e8c6f2d65e841a9bfd2b8c5` 与 LuCI `ad75cde88e694b511100576bfbe0a280e5efe6ef` 也具备相应 ucode 主题接入路径。Vantage 官方报告支持 OpenWrt 25.12、24.10（24.10 无线及附加应用覆盖有限），snapshot 未测试；这些源码级检查不等于 ImmortalWrt 上的浏览器或设备运行验证。切换 ref 时重新核实；缺少预期配置结构时明确失败，不走无消费者要求的兼容回退。
+**已验证的构建兼容性：** Ubuntu 26.04 + ImmortalWrt `v24.10.2`（源码 `cee53da5b58c6241eced0ef17956adda5515634b`、固定的 LuCI `dbf5de06f1f3989fab244cc22a43deaa1e3b77b2`）+ Vantage `v1.0.20` 已在 [CI 运行 43634995216](https://github.com/coachpo/immortalwrt-firmware-builder/actions/runs/43634995216) 中完成完整固件构建与自动发布，对应构建器提交为 `6071d0f`。该结果基于上文说明的 GNU coreutils provider 选择和 Go C bootstrap GNU C17 修复。[已发布的 Release](https://github.com/coachpo/immortalwrt-firmware-builder/releases/tag/immortalwrt-v24.10.2-build7-20261114-2159) 包含固件与来源附件，manifest 确认纳入 Vantage 主题及简体中文翻译。
+
+**运行时仍未验证：** 尚未进行实机刷写、启动或浏览器测试。构建成功不代表设备运行行为、主题实际显示效果和交互已通过验证。
+
+**其他 ref：** 源码 ref 按工作流输入、仓库变量、上游默认分支依次解析。仓库变量为 `v24.10.2`；本地示例未指定 ref 时仍跟随 master（`SNAPSHOT`）。之前对 master 源码 `a4ba8240d8a1aaef7e8c6f2d65e841a9bfd2b8c5` 与 LuCI `ad75cde88e694b511100576bfbe0a280e5efe6ef` 的检查仅确认了 ucode 主题接入路径，不是完整构建或运行测试。Vantage 官方报告支持 OpenWrt 25.12、24.10（24.10 无线及附加应用覆盖有限），snapshot 未测试。未经验证不得将上述组合的结果外推到其他 ref 或环境；缺少预期配置结构时明确失败，不走无消费者要求的兼容回退。
 
 ### 地区中立默认值
 
