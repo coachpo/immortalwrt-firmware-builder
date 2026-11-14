@@ -28,7 +28,7 @@ The shared [configuration helper](scripts/configure.py) prepares feeds and image
 
 ## Prerequisites (host build)
 
-Use an x86-64 Linux host, a case-sensitive filesystem and a non-root build user. The Ubuntu 22.04 dependency list is maintained in the [Dockerfile](Dockerfile) (`apt-get install`); install those packages on a matching host or use the container below. CI installs dependencies separately on `ubuntu-latest`, not in the Docker image.
+Use an x86-64 Linux host, a case-sensitive filesystem and a non-root build user. The Ubuntu 22.04 dependency list is maintained in the [Dockerfile](Dockerfile) (`apt-get install`); install those packages on a matching host or use the container below. Firmware CI installs dependencies separately on `ubuntu-24.04`, not in the Docker image.
 
 ## Quick Start (local build)
 
@@ -69,7 +69,7 @@ Inputs and fallback order:
 Behavior:
 
 - Checks out this repository, then checks out `immortalwrt/immortalwrt` into `immortalwrt/` with recursive submodules.
-- Builds on `ubuntu-latest`, while the Dockerfile uses Ubuntu 22.04; these are separate build environments.
+- Firmware compilation is pinned to `ubuntu-24.04`: selected ImmortalWrt releases require GNU host tools and reject Ubuntu 26.04's `install` implementation. Quick checks and the release job can use `ubuntu-latest`; the Dockerfile remains a separate Ubuntu 22.04 build environment. Do not bypass source prerequisite checks with `FORCE=1`.
 - Runs `python3 scripts/configure.py immortalwrt --ccache`, reusing local preparation and enabling `CONFIG_CCACHE=y`. The helper checks critical selections after expanding the configuration.
 - Builds with all available CPU threads, retrying with `make -j1 V=s` if the parallel build fails.
 - Uses a 4 GB ccache limit. Separate `ccache` and `dl` keys contain runner OS/architecture, `tr3000`, source ref, seed hash, cache epoch, run ID and attempt. Stable restore prefixes reuse the latest matching snapshot; each run attempt saves a new snapshot automatically, including for a moving default branch. Save ccache only after successful compilation; downloads can be saved after successful configuration even if compilation fails.
@@ -88,7 +88,7 @@ immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest
 
 The five names are defined once in [scripts/ci.py](scripts/ci.py). Both build staging and release staging require every file to exist and be non-empty before copying anything. Firmware staging and provenance recording require fresh destination directories to exclude stale assets. Downloads use explicit artifact IDs to keep firmware separate from provenance. If a selected source ref changes output naming, update that list rather than relaxing the completeness check.
 
-After compilation finishes (or is skipped after configuration failure), available provenance is uploaded separately with 7-day retention. `build-info.json` records actual builder/source/feed commits, source submodules, configuration/build outcomes, requested ref, run and runner details; `seed.config`, `firmware.config` (when available) and `feeds.conf` capture inputs. `source.patch` is included only for tracked source customizations. A partial config does not prove successful expansion. Before release, required provenance files, successful outcomes and the builder commit are checked; customized sources also require a non-empty patch. Successful releases retain provenance alongside the five firmware assets and show builder/source commits in the body. The release tag is anchored to the workflow commit, not a branch that may move during compilation. Traceability does not guarantee binary reproducibility.
+After compilation finishes (or is skipped after configuration failure), available provenance is uploaded separately with 7-day retention. `build-info.json` records actual builder/source/feed commits, source submodules, configuration/build outcomes, requested ref, run and runner details (including hosted image name/version); `seed.config`, `firmware.config` (when available) and `feeds.conf` capture inputs. `source.patch` is included only for tracked source customizations. A partial config does not prove successful expansion. Before release, required provenance files, successful outcomes and the builder commit are checked; customized sources also require a non-empty patch. Successful releases retain provenance alongside the five firmware assets and show builder/source commits in the body. The release tag is anchored to the workflow commit, not a branch that may move during compilation. Traceability does not guarantee binary reproducibility.
 
 The cleanup workflow runs daily at 03:00 UTC and can also be started manually. It deletes completed runs with conclusions `action_required`, `cancelled`, `failure`, or `skipped`, and keeps the latest 10 successful runs per workflow. The cleanup action also removes orphaned runs of deleted workflows. Release cleanup keeps the latest 10 non-draft releases whose tags start with `immortalwrt-`, deleting older matching releases and their tags.
 

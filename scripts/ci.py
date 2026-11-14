@@ -90,6 +90,8 @@ def record_provenance(builder, tree, destination, environment):
         "run_attempt": environment.get("GITHUB_RUN_ATTEMPT"),
         "runner_os": environment.get("RUNNER_OS"),
         "runner_arch": environment.get("RUNNER_ARCH"),
+        "runner_image": environment.get("ImageOS"),
+        "runner_image_version": environment.get("ImageVersion"),
         "run_url": "{}/{}/actions/runs/{}".format(
             environment.get("GITHUB_SERVER_URL", "https://github.com"),
             environment.get("GITHUB_REPOSITORY", ""),

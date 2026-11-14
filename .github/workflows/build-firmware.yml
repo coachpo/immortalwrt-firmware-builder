@@ -29,7 +29,8 @@ env:
 jobs:
   build:
     name: Build TR3000
-    runs-on: ubuntu-latest
+    # The selected ImmortalWrt releases require GNU host tools, not Ubuntu 26's uutils.
+    runs-on: ubuntu-24.04
     outputs:
       firmware_artifact_id: ${{ steps.upload-firmware.outputs.artifact-id }}
       provenance_artifact_id: ${{ steps.upload-provenance.outputs.artifact-id }}

@@ -28,7 +28,7 @@
 
 ## 主机构建依赖
 
-使用 x86-64 Linux 主机、大小写敏感文件系统和非 root 构建用户。Ubuntu 22.04 依赖列表统一维护在 [Dockerfile](Dockerfile) 的 `apt-get install` 段；可在匹配的主机安装这些包，或使用下文的容器。CI 单独安装依赖，使用 `ubuntu-latest`，不使用该 Docker 镜像。
+使用 x86-64 Linux 主机、大小写敏感文件系统和非 root 构建用户。Ubuntu 22.04 依赖列表统一维护在 [Dockerfile](Dockerfile) 的 `apt-get install` 段；可在匹配的主机安装这些包，或使用下文的容器。固件 CI 单独安装依赖，使用 `ubuntu-24.04`，不使用该 Docker 镜像。
 
 ## 快速开始
 
@@ -69,7 +69,7 @@ make -j"$(nproc)" V=sc
 行为：
 
 - 检出本仓库，然后将 `immortalwrt/immortalwrt` 检出到 `immortalwrt/`，递归检出子模块。
-- CI 使用 `ubuntu-latest`，Dockerfile 使用 Ubuntu 22.04，两者是独立的构建环境。
+- 固件编译固定使用 `ubuntu-24.04`：所选 ImmortalWrt 版本要求 GNU 主机工具，不能通过 Ubuntu 26.04 的 `install` 检查。快速检查和发布任务仍可使用 `ubuntu-latest`；Dockerfile 仍是独立的 Ubuntu 22.04 构建环境。不得使用 `FORCE=1` 跳过源码前置检查。
 - 执行 `python3 scripts/configure.py immortalwrt --ccache`，复用本地配置流程并启用 `CONFIG_CCACHE=y`。脚本展开配置后检查关键选项。
 - 使用所有可用 CPU 线程编译；并行编译失败时，用 `make -j1 V=s` 重试。
 - ccache 容量上限为 4 GB。独立的 `ccache` 与 `dl` key 包含 runner 操作系统及架构、`tr3000`、源码 ref、seed hash、cache epoch、运行 ID 与尝试次数。稳定恢复前缀复用最近匹配快照，每次运行尝试自动保存新快照，默认分支变化也无需手动刷新。ccache 仅在编译成功后保存；下载缓存可在配置成功但编译失败时保存。
@@ -88,7 +88,7 @@ immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest
 
 五个文件名统一定义在 [scripts/ci.py](scripts/ci.py)。构建和发布两端均先检查所有文件存在且非空，再复制任何文件；收集与来源记录只接受新的目标目录，避免旧附件混入。下载使用明确的 artifact ID，防止固件与来源记录混杂。所选 ref 改变产物命名时更新该列表，不放宽完整性检查。
 
-编译结束后（或配置失败、编译跳过时）单独上传可用的来源记录，保留 7 天：`build-info.json` 记录实际构建器、源码、feeds 提交、源码子模块、配置/编译结果、请求 ref、运行与 runner 信息；`seed.config`、`firmware.config`（存在时）、`feeds.conf` 保留输入；源码有已跟踪改动时才保存 `source.patch`。部分配置不代表展开成功。发布前逐一检查必需来源附件、成功状态与构建器提交，定制源码时还必须有非空补丁。成功发布将来源附件与五个固件产物一起保留，正文显示构建器及源码提交，Release 标签绑定本次工作流提交，避免长时间构建期间分支移动导致标签漂移。可追溯性不等于二进制可复现。
+编译结束后（或配置失败、编译跳过时）单独上传可用的来源记录，保留 7 天：`build-info.json` 记录实际构建器、源码、feeds 提交、源码子模块、配置/编译结果、请求 ref、运行与 runner 信息（含托管镜像名称和版本）；`seed.config`、`firmware.config`（存在时）、`feeds.conf` 保留输入；源码有已跟踪改动时才保存 `source.patch`。部分配置不代表展开成功。发布前逐一检查必需来源附件、成功状态与构建器提交，定制源码时还必须有非空补丁。成功发布将来源附件与五个固件产物一起保留，正文显示构建器及源码提交，Release 标签绑定本次工作流提交，避免长时间构建期间分支移动导致标签漂移。可追溯性不等于二进制可复现。
 
 清理工作流每天 03:00 UTC 运行，也可手动触发。它删除已完成且结果为 `action_required`、`cancelled`、`failure` 或 `skipped` 的运行记录，为每个工作流保留最近 10 次成功运行。清理 action 还会删除已删除工作流的孤立运行记录。Release 清理会保留最新的 10 个标签以 `immortalwrt-` 开头的非草稿 Release，删除更早匹配的 Release 及对应标签。
 
