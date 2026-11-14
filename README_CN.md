@@ -71,6 +71,7 @@ make -j"$(nproc)" V=sc
 - 检出本仓库，然后将 `immortalwrt/immortalwrt` 检出到 `immortalwrt/`，递归检出子模块。
 - 固件编译跟随 `ubuntu-latest`（目前为 Ubuntu 26.04）。所选 ImmortalWrt 版本要求 GNU 主机工具，CI 因此选择 Ubuntu 官方的 `coreutils-from-gnu` provider 替代默认 uutils，并在配置前验证 GNU `install`。[Ubuntu 官方切换说明](https://ubuntu.com/server/docs/reference/other-tools/sudo-rs/)解释了必需的 `--allow-remove-essential` 选项；只在一次性 runner 上切换 provider，不用 `FORCE=1` 绕过源码检查。Dockerfile 仍是独立的 Ubuntu 22.04 构建环境。
 - 执行 `python3 scripts/configure.py immortalwrt --ccache`，复用本地配置流程并启用 `CONFIG_CCACHE=y`。脚本展开配置后检查关键选项。
+- feeds 更新后，准备过程将 Go 源码及 bootstrap 下载统一指向官方端点，并应用[上游 C bootstrap 方言修复](https://github.com/openwrt/packages/blob/openwrt-24.10/lang/golang/golang/Makefile)：仅 Go 1.4 C bootstrap 指定 `-std=gnu17`，防止新版 GCC 默认 C23 拒绝其 `bool` typedef。不降级 runner、编译器或固件 ref，不改目标编译器选项。
 - 使用所有可用 CPU 线程编译；并行编译失败时，用 `make -j1 V=s` 重试。
 - ccache 容量上限为 4 GB。独立的 `ccache` 与 `dl` key 包含 runner 操作系统及架构、`tr3000`、源码 ref、seed hash、cache epoch、运行 ID 与尝试次数。稳定恢复前缀复用最近匹配快照，每次运行尝试自动保存新快照，默认分支变化也无需手动刷新。ccache 仅在编译成功后保存；下载缓存可在配置成功但编译失败时保存。
 - `cache_epoch` 仍可手动切换命名空间，不再是刷新快照的必要步骤。回退前缀可能复用旧 epoch，因此改值不保证从空缓存开始。
@@ -88,7 +89,7 @@ immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest
 
 五个文件名统一定义在 [scripts/ci.py](scripts/ci.py)。构建和发布两端均先检查所有文件存在且非空，再复制任何文件；收集与来源记录只接受新的目标目录，避免旧附件混入。下载使用明确的 artifact ID，防止固件与来源记录混杂。所选 ref 改变产物命名时更新该列表，不放宽完整性检查。
 
-编译结束后（或配置失败、编译跳过时）单独上传可用的来源记录，保留 7 天：`build-info.json` 记录实际构建器、源码、feeds 提交、源码子模块、配置/编译结果、请求 ref、运行与 runner 信息（含托管镜像名称和版本）；`seed.config`、`firmware.config`（存在时）、`feeds.conf` 保留输入；源码有已跟踪改动时才保存 `source.patch`。部分配置不代表展开成功。发布前逐一检查必需来源附件、成功状态与构建器提交，定制源码时还必须有非空补丁。成功发布将来源附件与五个固件产物一起保留，正文显示构建器及源码提交，Release 标签绑定本次工作流提交，避免长时间构建期间分支移动导致标签漂移。可追溯性不等于二进制可复现。
+编译结束后（或配置失败、编译跳过时）单独上传可用的来源记录，保留 7 天：`build-info.json` 记录实际构建器、源码、feeds 提交、已修改的 feed 名称、源码子模块、配置/编译结果、请求 ref、运行与 runner 信息（含托管镜像名称和版本）；`seed.config`、`firmware.config`（存在时）、`feeds.conf` 保留输入。源码有已跟踪改动时保存 `source.patch`；各 feed 有已跟踪改动时另存 `feed-<name>.patch`，应在对应 feed 的已记录提交上、从该 feed 根目录应用。部分配置不代表展开成功。发布前逐一检查必需来源附件、成功状态与构建器提交，定制源码或 feed 时还必须有相应非空补丁。成功发布将来源附件与五个固件产物一起保留，正文显示构建器及源码提交，Release 标签绑定本次工作流提交，避免长时间构建期间分支移动导致标签漂移。可追溯性不等于二进制可复现。
 
 清理工作流每天 03:00 UTC 运行，也可手动触发。它删除已完成且结果为 `action_required`、`cancelled`、`failure` 或 `skipped` 的运行记录，为每个工作流保留最近 10 次成功运行。清理 action 还会删除已删除工作流的孤立运行记录。Release 清理会保留最新的 10 个标签以 `immortalwrt-` 开头的非草稿 Release，删除更早匹配的 Release 及对应标签。
 
@@ -151,7 +152,7 @@ Dockerfile 提供统一的构建环境，但基础镜像、apt 软件包版本�
 
 ## 开发与验证
 
-从本构建器仓库根目录执行；针对性测试需要 Python 3、Git 和 Perl，工作流静态检查使用 actionlint（可配合 ShellCheck）：
+从本构建器仓库根目录执行；针对性测试需要 Python 3、Git、Perl、make 和支持 C23/C17 模式的 C 编译器，工作流静态检查使用 actionlint（可配合 ShellCheck）：
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_configure.py' -v

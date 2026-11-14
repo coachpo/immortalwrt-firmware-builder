@@ -84,10 +84,33 @@ def check_config(config):
         raise ValueError("China-specific default settings must remain disabled")
 
 
+def prepare_feeds(tree):
+    golang = tree / "feeds/packages/lang/golang/golang/Makefile"
+    contents = golang.read_text()
+    # Go source and bootstrap archives use the same upstream source list.
+    contents = re.sub(
+        r"^GO_SOURCE_URLS:=[^\n]*(?:\n[ \t]+[^\n]*)*",
+        "GO_SOURCE_URLS:=https://dl.google.com/go/ https://go.dev/dl/",
+        contents,
+        flags=re.MULTILINE,
+    )
+    # Upstream openwrt-24.10 fixes GCC 15's C23 default only for the C bootstrap.
+    # Other Go profiles and the target compiler retain their existing flags.
+    if "$(call GoCompiler/Bootstrap/Make," in contents:
+        original = "\t$(call GoCompiler/Bootstrap/Make, \\\n\t\t$(HOST_GO_VARS) \\\n"
+        fixed = original + '\t\tCC="$(HOSTCC_NOCACHE) -std=gnu17" \\\n'
+        if fixed not in contents:
+            if contents.count(original) != 1:
+                raise ValueError("Unsupported Go C bootstrap recipe")
+            contents = contents.replace(original, fixed, 1)
+    golang.write_text(contents)
+
+
 def configure(tree, ccache=False):
     prepare_source(tree)
-    for action in ("update", "install"):
-        subprocess.run(["./scripts/feeds", action, "-a"], cwd=tree, check=True)
+    subprocess.run(["./scripts/feeds", "update", "-a"], cwd=tree, check=True)
+    prepare_feeds(tree)
+    subprocess.run(["./scripts/feeds", "install", "-a"], cwd=tree, check=True)
     config = tree / ".config"
     shutil.copyfile(ROOT / "tr3000/seed.config", config)
     if ccache:

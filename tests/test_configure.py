@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -50,6 +51,50 @@ if ($mirror eq 'unused') {
 }
 print join("\n", @mirrors), "\n";
 ''')
+        golang = self.tree / "feeds/packages/lang/golang/golang"
+        golang.mkdir(parents=True)
+        (golang / "Makefile").write_text(r'''GO_SOURCE_URLS:=https://mirrors.ustc.edu.cn/golang/ \
+    https://dl.google.com/go/
+HOSTCC_NOCACHE:=cc
+HOST_GO_VARS=CC="$(HOSTCC_NOCACHE)"
+define GoCompiler/Bootstrap/Make
+    $(1) python3 -c 'import os; print(os.environ["CC"])'
+endef
+define Host/Compile
+	$(call GoCompiler/Bootstrap/Make, \
+		$(HOST_GO_VARS) \
+	)
+endef
+show:
+	@$(call Host/Compile)
+urls:
+	@printf '%s\n' $(GO_SOURCE_URLS)
+''')
+
+    def test_go_c_bootstrap_keeps_its_c17_dialect_on_a_c23_host(self):
+        golang = self.tree / "feeds/packages/lang/golang/golang"
+        source = self.tree / "bootstrap.c"
+        source.write_text("typedef int bool;\nint main(void) { bool value = 1; return !value; }\n")
+
+        def compiler():
+            output = subprocess.run(["make", "-s", "show"], cwd=golang,
+                                    capture_output=True, text=True, check=True).stdout
+            return shlex.split(output.strip())
+
+        original = compiler()
+        failed = subprocess.run([original[0], "-std=c2x", *original[1:], "-Werror",
+                                 "-fsyntax-only", str(source)], capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("bool", failed.stderr)
+        configure.prepare_feeds(self.tree)
+        configure.prepare_feeds(self.tree)
+        fixed = compiler()
+        self.assertEqual(fixed, ["cc", "-std=gnu17"])
+        subprocess.run([fixed[0], "-std=c2x", *fixed[1:], "-Werror",
+                        "-fsyntax-only", str(source)], check=True)
+        urls = subprocess.run(["make", "-s", "urls"], cwd=golang,
+                              capture_output=True, text=True, check=True).stdout.splitlines()
+        self.assertEqual(urls, ["https://dl.google.com/go/", "https://go.dev/dl/"])
 
     def test_github_downloads_resolve_directly_without_proxy_defaults(self):
         configure.prepare_source(self.tree)

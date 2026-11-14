@@ -119,6 +119,8 @@ class ProvenanceTests(unittest.TestCase):
         (self.tree / ".config").write_bytes(config)
         readme = self.tree / "README.md"
         readme.write_text(readme.read_text() + "\nsource customization\n")
+        feed_readme = self.feeds / "vantage/README.md"
+        feed_readme.write_text(feed_readme.read_text() + "\nfeed customization\n")
         destination = self.root / "provenance"
         ci.record_provenance(ROOT, self.tree, destination, {
             "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
@@ -131,6 +133,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(info["immortalwrt_commit"], expected)
         self.assertEqual(info["builder_commit"], ci.git_output(ROOT, "rev-parse", "HEAD").strip())
         self.assertEqual(info["feeds"], {"vantage": expected})
+        self.assertEqual(info["modified_feeds"], ["vantage"])
         self.assertTrue(info["config_available"])
         self.assertEqual(info["runner_image"], "ubuntu26")
         self.assertEqual(info["runner_image_version"], "test-image-version")
@@ -140,8 +143,10 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual((destination / "feeds.conf").read_bytes(), (self.tree / "feeds.conf").read_bytes())
         subprocess.run(["git", "-C", str(self.tree), "apply", "--check", "--reverse",
                         str(destination / "source.patch")], check=True)
+        subprocess.run(["git", "-C", str(self.feeds / "vantage"), "apply", "--check", "--reverse",
+                        str(destination / "feed-vantage.patch")], check=True)
         ci.verify_provenance(destination, info["builder_commit"])
-        for name in (*ci.PROVENANCE_FILES, "source.patch"):
+        for name in (*ci.PROVENANCE_FILES, "source.patch", "feed-vantage.patch"):
             with self.subTest(missing=name):
                 file = destination / name
                 saved = self.root / "saved"

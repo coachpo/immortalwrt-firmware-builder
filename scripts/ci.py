@@ -70,10 +70,14 @@ def git_output(tree, *arguments):
 
 def record_provenance(builder, tree, destination, environment):
     feeds = {}
+    feed_patches = {}
     for feed in sorted((tree / "feeds").glob("*")):
         if (feed / ".git").exists():
             try:
                 feeds[feed.name] = git_output(feed, "rev-parse", "HEAD").strip()
+                patch = git_output(feed, "diff", "--binary", "HEAD", "--")
+                if patch:
+                    feed_patches[feed.name] = patch
             except subprocess.CalledProcessError:
                 # A failed feed clone may leave a repository without HEAD.
                 feeds[feed.name] = None
@@ -83,6 +87,7 @@ def record_provenance(builder, tree, destination, environment):
         "requested_ref": environment.get("IMMORTALWRT_REF") or "default branch",
         "source_submodules": git_output(tree, "submodule", "status", "--recursive").strip(),
         "feeds": feeds,
+        "modified_feeds": list(feed_patches),
         "config_available": (tree / ".config").is_file(),
         "configuration_outcome": environment.get("CONFIGURATION_OUTCOME"),
         "compilation_outcome": environment.get("COMPILATION_OUTCOME"),
@@ -109,6 +114,8 @@ def record_provenance(builder, tree, destination, environment):
     # The source commit alone omits the helper's tracked source-mirror edits.
     if patch:
         (destination / "source.patch").write_text(patch)
+    for name, contents in feed_patches.items():
+        (destination / f"feed-{name}.patch").write_text(contents)
 
 
 def verify_provenance(source, builder_commit):
@@ -124,6 +131,8 @@ def verify_provenance(source, builder_commit):
         raise ValueError("Feed provenance contains an unresolved revision")
     if info["source_modified"]:
         require_files(source, ("source.patch",))
+    for name in info["modified_feeds"]:
+        require_files(source, (f"feed-{name}.patch",))
 
 
 def main():
