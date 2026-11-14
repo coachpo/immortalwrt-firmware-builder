@@ -6,33 +6,29 @@
 
 English | [简体中文](README_CN.md)
 
+[Build](#quick-start-local-build) · [Configuration](#configuration-and-defaults) · [Contributing](#development-and-validation) · [Agent guide](AGENTS.md)
+
 Firmware seed and build automation for **Cudy TR3000 v1 (MediaTek Filogic, OpenWrt U-Boot layout)**. The selected device profile is `cudy_tr3000-v1-ubootmod`, as defined in the [upstream device definitions](https://github.com/immortalwrt/immortalwrt/blob/master/target/linux/mediatek/image/filogic.mk). Use images for this hardware revision and bootloader layout.
 
-The [seed configuration](tr3000/seed.config) is a starting `.config` to expand with `make defconfig`, then optionally refine with `make menuconfig`. It selects LuCI, VPN tools, DoH, QoS, and USB tethering/modem packages. Final packages and device defaults depend on the selected ImmortalWrt source and feeds; inspect the generated `.config` and firmware `.manifest` to confirm the result.
+The shared [configuration helper](scripts/configure.py) prepares feeds and image defaults, then expands the [seed](tr3000/seed.config) with `make defconfig`; optionally refine with `make menuconfig`. It selects LuCI, VPN tools, DoH, QoS, and USB tethering/modem packages. Final packages and device defaults depend on the selected ImmortalWrt source and feeds; inspect the generated `.config` and firmware `.manifest` to confirm the result.
 
 ## Repository Layout
 
-- `tr3000/seed.config` — TR3000 v1 U-Boot layout configuration.
+- `tr3000/seed.config` — authoritative target and package seed.
+- `tr3000/files/` — image overlay, including late default-theme selection.
+- `scripts/configure.py` — shared local/CI feed, neutral source mirror, overlay and configuration preparation.
+- `scripts/ci.py` — cache keys, complete firmware staging and build provenance.
+- `tests/test_configure.py` — targeted configuration and shell-control-flow tests.
+- `tests/test_ci.py` — targeted artifact, cache and provenance tests; uses Git locally without new commits or network access.
 - `immortalwrt/` — ignored runtime checkout location for ImmortalWrt, populated by local commands or CI.
 - `Dockerfile` — Ubuntu 22.04 build environment, running as the non-root `builder` user.
 - `.github/workflows/build-firmware.yml` — manually triggered workflow to fetch ImmortalWrt, build, cache, and publish a release.
+- `.github/workflows/quick-checks.yml` — independent checks on pushes, pull requests and manual dispatch; never builds or releases firmware.
 - `.github/workflows/cleanup-runs-releases.yml` — scheduled cleanup of workflow runs and `immortalwrt-*` releases.
 
 ## Prerequisites (host build)
 
-The dependency list below matches the Dockerfile's Ubuntu 22.04 environment and assumes an x86-64 Linux host. Package availability may differ on other Ubuntu/Debian releases. Run the firmware build as a non-root user.
-
-```bash
-sudo apt-get update && sudo apt-get install -y \
-  ack antlr3 asciidoc autoconf automake autopoint binutils gcc-multilib gettext flex gawk \
-  bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar \
-  g++-multilib git libgnutls28-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
-  libglib2.0-dev libgmp-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
-  libreadline-dev libssl-dev libtool libyaml-dev lld llvm lrzsz genisoimage msmtp nano ninja-build \
-  p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-pyelftools \
-  qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget \
-  xmlto xxd zlib1g-dev zstd
-```
+Use an x86-64 Linux host, a case-sensitive filesystem and a non-root build user. The Ubuntu 22.04 dependency list is maintained in the [Dockerfile](Dockerfile) (`apt-get install`); install those packages on a matching host or use the container below. CI installs dependencies separately on `ubuntu-latest`, not in the Docker image.
 
 ## Quick Start (local build)
 
@@ -47,23 +43,13 @@ git clone --depth=1 --recurse-submodules https://github.com/immortalwrt/immortal
 # git -C immortalwrt checkout --detach FETCH_HEAD
 # git -C immortalwrt submodule update --init --recursive
 
+python3 scripts/configure.py immortalwrt
 cd immortalwrt
-./scripts/feeds update -a && ./scripts/feeds install -a
-cp ../tr3000/seed.config .config
-make defconfig
 make menuconfig    # optional tweaks
 make -j"$(nproc)" V=sc
 ```
 
-Option B — use an existing ImmortalWrt source tree. From its root directory:
-
-```bash
-./scripts/feeds update -a && ./scripts/feeds install -a
-cp /path/to/immortalwrt-firmware-builder/tr3000/seed.config .config
-make defconfig
-make menuconfig    # optional tweaks
-make -j"$(nproc)" V=sc
-```
+Option B — use an existing source tree. From this builder repository's root, run `python3 scripts/configure.py /path/to/immortalwrt`, then build in that source tree. The helper preserves other feeds and unrelated overlay files, but replaces `.config` with this project's seed and owns the overlay paths supplied here. Do not bypass it by copying only the seed: that omits the theme feed and defaults.
 
 The source and feeds must provide the selected device profile and packages. This seed includes ImmortalWrt-specific packages and is not guaranteed to work unchanged in an OpenWrt tree.
 
@@ -72,6 +58,8 @@ Firmware images and manifests land under `bin/targets/mediatek/filogic/` within 
 ## GitHub Actions (workflow_dispatch)
 
 Open **Actions → Build ImmortalWrt firmware → Run workflow**. A push alone does not trigger a firmware build. Once the build job succeeds, the release job runs automatically; there is no publish toggle.
+
+**Quick checks** runs independently on pushes, pull requests and manual dispatch. It runs the two targeted test files, image-default shell syntax, push/PR event-range whitespace checks (latest-commit checks for manual/new-branch runs) and actionlint 1.7.12 (with ShellCheck when installed). It does not fetch firmware sources/feeds, restore firmware caches, compile or publish. Its result neither starts nor gates the manually dispatched firmware workflow.
 
 Inputs and fallback order:
 
@@ -82,10 +70,10 @@ Behavior:
 
 - Checks out this repository, then checks out `immortalwrt/immortalwrt` into `immortalwrt/` with recursive submodules.
 - Builds on `ubuntu-latest`, while the Dockerfile uses Ubuntu 22.04; these are separate build environments.
-- Updates and installs feeds, copies `tr3000/seed.config`, enables `CONFIG_CCACHE=y`, and runs `make defconfig`.
+- Runs `python3 scripts/configure.py immortalwrt --ccache`, reusing local preparation and enabling `CONFIG_CCACHE=y`. The helper checks critical selections after expanding the configuration.
 - Builds with all available CPU threads, retrying with `make -j1 V=s` if the parallel build fails.
-- Uses a 4 GB ccache limit. Separate `ccache` and `dl` keys contain runner OS, `tr3000`, source ref, seed hash, and cache epoch.
-- Changing `cache_epoch` to a new value creates a new cache key, but restore prefixes can still reuse an older matching cache. This refreshes the cache namespace; it does not guarantee an empty cache.
+- Uses a 4 GB ccache limit. Separate `ccache` and `dl` keys contain runner OS/architecture, `tr3000`, source ref, seed hash, cache epoch, run ID and attempt. Stable restore prefixes reuse the latest matching snapshot; each run attempt saves a new snapshot automatically, including for a moving default branch. Save ccache only after successful compilation; downloads can be saved after successful configuration even if compilation fails.
+- `cache_epoch` remains a manual namespace override, not a required refresh step. Fallback prefixes can reuse older epochs, so changing it does not guarantee an empty cache.
 - Uploads the selected firmware files as `immortalwrt_firmware_tr3000_<YYYYMMDDHHMM>` with 7-day retention, then publishes an `immortalwrt-<ref-or-default>-build<run-number>-<YYYYMMDD-HHMM>` release tag. Unsupported tag characters are replaced with underscores.
 
 The collection step expects these files under `immortalwrt/bin/targets/mediatek/filogic/`:
@@ -98,7 +86,9 @@ immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod-squashfs-sysupgrade.itb
 immortalwrt-mediatek-filogic-cudy_tr3000-v1-ubootmod.manifest
 ```
 
-The paths are fixed in the workflow. If a selected source ref changes output naming, adjust the collection and release file patterns to match that ref.
+The five names are defined once in [scripts/ci.py](scripts/ci.py). Both build staging and release staging require every file to exist and be non-empty before copying anything. Firmware staging and provenance recording require fresh destination directories to exclude stale assets. Downloads use explicit artifact IDs to keep firmware separate from provenance. If a selected source ref changes output naming, update that list rather than relaxing the completeness check.
+
+After compilation finishes (or is skipped after configuration failure), available provenance is uploaded separately with 7-day retention. `build-info.json` records actual builder/source/feed commits, source submodules, configuration/build outcomes, requested ref, run and runner details; `seed.config`, `firmware.config` (when available) and `feeds.conf` capture inputs. `source.patch` is included only for tracked source customizations. A partial config does not prove successful expansion. Before release, required provenance files, successful outcomes and the builder commit are checked; customized sources also require a non-empty patch. Successful releases retain provenance alongside the five firmware assets and show builder/source commits in the body. The release tag is anchored to the workflow commit, not a branch that may move during compilation. Traceability does not guarantee binary reproducibility.
 
 The cleanup workflow runs daily at 03:00 UTC and can also be started manually. It deletes completed runs with conclusions `action_required`, `cancelled`, `failure`, or `skipped`, and keeps the latest 10 successful runs per workflow. The cleanup action also removes orphaned runs of deleted workflows. Release cleanup keeps the latest 10 non-draft releases whose tags start with `immortalwrt-`, deleting older matching releases and their tags.
 
@@ -124,46 +114,69 @@ docker run --rm -it \
   -v "$(pwd)":/workdir \
   immortalwrt-builder bash
 # inside the container:
-cd /workdir/immortalwrt
-./scripts/feeds update -a && ./scripts/feeds install -a
-cp ../tr3000/seed.config .config
-make defconfig && make -j"$(nproc)" V=sc
+cd /workdir
+python3 scripts/configure.py immortalwrt
+cd immortalwrt
+make -j"$(nproc)" V=sc
 ```
 
 The Dockerfile provides a shared build environment, but its base image and apt packages are not pinned, and the default source/feeds can change. It does not guarantee reproducible firmware binaries.
 
-## Explicit Seed Selections
+## Configuration and Defaults
 
-These are the packages explicitly selected in `tr3000/seed.config`. Device defaults and dependencies are resolved by `make defconfig`.
+The [seed](tr3000/seed.config) owns explicit selections: LuCI, Vantage, Simplified Chinese translations, nftables QoS/firewall/UPnP, diagnostics, DoH with dnsmasq-full, WireGuard/OpenVPN/Tailscale, USB tethering/cellular modem support and timezone data (`zoneinfo-core`, `zoneinfo-europe`). Europe timezone data does not select a local timezone. Source/feeds and device defaults are expanded by `make defconfig`. The helper fails if the target, LuCI, Vantage or its selected translation is dropped, or `default-settings-chn` is enabled.
 
-| Feature | Selected packages |
+### Vantage
+
+The [official Vantage feed](https://github.com/anothaDev/luci-theme-vantage) is registered in the runtime `feeds.conf`, pinned in [configure.py](scripts/configure.py) to v1.0.20 commit `0f8d16f2ce25132e6a074575af16468524d2d5dd`. Installation uses the existing `scripts/feeds` mechanism, not binary downloads or an on-device repository. Only `luci-theme-vantage` and `luci-i18n-vantage-theme-zh-cn` are selected; the separate dashboard `luci-app-vantage` is not required or included. The theme depends on `luci-base`, uses ucode templates and disables CSS minification in its own Makefile. See the [official install guide](https://github.com/anothaDev/luci-theme-vantage/blob/0f8d16f2ce25132e6a074575af16468524d2d5dd/docs/INSTALL.md).
+
+The [late first-boot script](tr3000/files/etc/uci-defaults/zzzz-vantage-theme) selects `luci.main.mediaurlbase=/luci-static/vantage` after package defaults. Its first execution also overrides a theme choice retained by sysupgrade; other retained device settings are not migrated. Argon and its configuration UI/translation are no longer explicitly selected. Bootstrap stays because `luci` → `luci-light` actually depends on it; it is not the default.
+
+**Compatibility:** the ref resolves from workflow input, repository variable, then upstream default branch. The remote repository variable currently selects `v24.10.2`, source `cee53da5b58c6241eced0ef17956adda5515634b` with pinned LuCI `dbf5de06f1f3989fab244cc22a43deaa1e3b77b2`; Vantage theme and translation package metadata resolve against that tree. Local examples without a ref still follow master (`SNAPSHOT`). Earlier inspection of master source `a4ba8240d8a1aaef7e8c6f2d65e841a9bfd2b8c5` and LuCI `ad75cde88e694b511100576bfbe0a280e5efe6ef` also confirmed the ucode theme integration path. Vantage reports OpenWrt 25.12/24.10 support (limited 24.10 Wi-Fi/add-on coverage), not snapshot testing. Source checks do not establish router/browser runtime compatibility on ImmortalWrt. Recheck on ref changes; unsupported configuration layouts fail rather than introducing compatibility fallbacks without a consumer requirement.
+
+### Region-neutral defaults
+
+| Source | Policy |
 | --- | --- |
-| LuCI and Argon theme | `luci`, `luci-theme-argon`, `luci-app-argon-config`, `luci-i18n-base-zh-cn`, `luci-i18n-argon-config-zh-cn` |
-| Web management services | `rpcd`, `uhttpd`, `uhttpd-mod-ubus` |
-| CA certificates | `ca-certificates` |
-| QoS | `nft-qos`, `luci-app-nft-qos`, `luci-i18n-nft-qos-zh-cn` |
-| Diagnostics | `htop`, `iperf3`, `tcpdump-mini` |
-| DNS over HTTPS | `https-dns-proxy`, `luci-app-https-dns-proxy`, `luci-i18n-https-dns-proxy-zh-cn` |
-| DNS/DHCP | `dnsmasq-full` |
-| Firewall UI | `luci-app-firewall`, `luci-i18n-firewall-zh-cn` |
-| WireGuard VPN | `wireguard-tools`, `kmod-wireguard`, `luci-proto-wireguard`, `luci-i18n-wireguard-zh-cn` |
-| OpenVPN (mbedTLS) | `openvpn-mbedtls`, `luci-proto-openvpn` |
-| Tailscale | `tailscale`, `luci-app-tailscale-community` |
-| UPnP | `miniupnpd-nftables`, `luci-app-upnp`, `luci-i18n-upnp-zh-cn` |
-| USB tethering | `kmod-usb-net-rndis`, `kmod-usb-net-cdc-ncm` |
-| USB cellular modems | `usb-modeswitch`, `uqmi`, `umbim`, `ppp`, `comgt`, `kmod-usb-serial-option`, `kmod-usb-acm` |
-| Timezone data | `zoneinfo-core`, `zoneinfo-europe` |
+| `default-settings-chn` | Explicitly disabled and checked after expansion. Prevent its Shanghai/CST-8 timezone, Tencent/Aliyun/NTSC/CN NTP servers and regional package-mirror rewrite from entering the image. |
+| Base time/NTP | Keep inspected upstream UTC (`UTC` on 24.10, `GMT0` on snapshot) and `time.apple.com`, `time1.google.com`, `time.cloudflare.com`, `pool.ntp.org`; do not select another country. |
+| DNS/DoH | Keep WAN-provided DNS and upstream generic Cloudflare/Google DoH defaults. Provider catalogs are optional choices, not active presets; retain them. |
+| Firmware package feeds | Keep official `downloads.immortalwrt.org`; disabling `default-settings-chn` prevents its `mirrors.vsean.net` rewrite. |
+| Build source mirrors | Replace Debian/Apache/GNU/kernel/GNOME mirror lists with project-operated endpoints, removing Tencent, Aliyun, Tsinghua, USTC, NJU and ISCAS defaults. GitHub raw downloads use official `raw.githubusercontent.com` directly, without hardcoded downloader proxy/CDN defaults. Use `ftp.openbsd.org` for LibreSSL instead of its Tencent-led list. Retain other project lists and package hashes. |
+| Locale/radio regulation | Keep Chinese UI/translations. Do not set a wireless country or alter board/calibration regulatory data; configure the legally correct deployment country on the device. |
 
-The seed enables Simplified Chinese LuCI translations with `CONFIG_LUCI_LANG_zh_Hans=y` and explicitly deselects `default-settings-chn`.
+These facts concern inspected source/feeds and fresh configuration, not every possible ref, optional package or settings restored by sysupgrade. On ref changes, review generated configuration, selected package defaults and image contents.
+
+The inspected master feeds also lack the seed's existing `nft-qos`/`luci-app-nft-qos` (including its translation) and `luci-i18n-wireguard-zh-cn` packages. These unrelated selections are retained, not silently replaced with another QoS implementation. Do not interpret the seed's requested features as a verified installed-package list on that snapshot.
+
+## Development and Validation
+
+From this builder repository's root, with Python 3, Git and Perl for the targeted tests, and actionlint (optionally with ShellCheck) for workflow linting:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_configure.py' -v
+python3 -m unittest discover -s tests -p 'test_ci.py' -v
+sh -n tr3000/files/etc/uci-defaults/zzzz-vantage-theme
+actionlint
+git diff --check
+```
+
+The tests use temporary trees and command doubles for preparation idempotency, feed/configuration ordering, critical selections and UCI failure handling. They do not run real `make defconfig`, UCI or LuCI. For actual expansion on a prepared Linux host, run `python3 scripts/configure.py /path/to/immortalwrt` (optionally `--ccache`): it fetches feeds and replaces that tree's `.config`, without compiling firmware. Inspect `.config` and, after a separately requested build, the manifest and clean-boot UI. Full firmware builds are not the default documentation/script check.
+
+Change selections in the seed, preparation in the helper, and image defaults in `tr3000/files/`. Keep both README translations aligned. These configuration/development sections own architecture and contributor policy; do not create duplicate documents just to fill a template.
+
+**Compatibility policy:** backward compatibility is not required. For authorized replacements, update actual callers, configuration, tests and documentation and remove superseded paths in scope. Do not add aliases, conversions, dual paths or legacy fallbacks without an explicit requirement or verified consumer.
+
+**Design principles:** treat uncertain capability/tier/quota as assumptions, choosing the looser supported option rather than speculative limits. Assume legitimate use; add no preemptive abuse controls or worst-case handling beyond accepted requirements. Record what observation would trigger a revisit, preserving established security and operational obligations. Keep files cohesive and navigable; split obstructive responsibilities, not to satisfy arbitrary line limits or create needless abstractions.
 
 ## Troubleshooting
 
-- Re-run feeds if packages are missing: `./scripts/feeds update -a && ./scripts/feeds install -a`. Confirm the selected source and feeds contain the package symbols requested by the seed.
+- For missing packages, rerun the shared configuration helper, inspect feed errors and `.config`, and confirm the source/feeds provide the seed symbols. A successful clone does not prove package indexing or configuration expansion succeeded.
 - For build failures, try a single-thread verbose build: `make -j1 V=s`.
 - Check free disk space before retrying large builds; build output, staging files, and downloaded sources consume substantial space.
-- If artifact upload finds no files, compare the generated filenames with the workflow's fixed collection paths.
-- To refresh CI cache snapshots, use a new `cache_epoch` value. Older cache contents may still be restored through the fallback prefixes.
+- If staging reports missing or empty artifacts, compare generated filenames with the required list in `scripts/ci.py`.
+- CI refreshes cache snapshots automatically per run attempt; use `cache_epoch` only for a manual namespace change. Older contents may still be restored through fallback prefixes.
 
 ## License
 
-This project is licensed under the MIT License — see [LICENSE](LICENSE).
+This builder is licensed under the MIT License — see [LICENSE](LICENSE). Downloaded firmware components retain their own licenses; Vantage is GPL-3.0-or-later.

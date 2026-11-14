@@ -1,0 +1,52 @@
+name: Quick checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Targeted configuration and CI helper tests
+        run: |
+          python3 -m unittest discover -s tests -p 'test_configure.py' -v
+          python3 -m unittest discover -s tests -p 'test_ci.py' -v
+
+      - name: Check image default script syntax
+        run: sh -n tr3000/files/etc/uci-defaults/zzzz-vantage-theme
+
+      - name: Check whitespace
+        env:
+          CHECK_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$CHECK_BASE" && ! "$CHECK_BASE" =~ ^0+$ ]]; then
+            git cat-file -e "${CHECK_BASE}^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$CHECK_BASE"
+            git diff --check "$CHECK_BASE" HEAD
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^ HEAD
+          else
+            git show --format= --check HEAD
+          fi
+
+      - name: Lint workflows
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+        run: |
+          curl --fail --silent --show-error --location \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$RUNNER_TEMP/actionlint.tar.gz"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"

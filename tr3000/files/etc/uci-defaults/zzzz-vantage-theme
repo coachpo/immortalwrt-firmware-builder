@@ -1,0 +1,5 @@
+#!/bin/sh
+# Run after package defaults so a fresh image always opens with Vantage.
+uci set luci.main.mediaurlbase='/luci-static/vantage' || exit 1
+uci commit luci || exit 1
+exit 0
